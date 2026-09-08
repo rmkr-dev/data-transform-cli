@@ -1,0 +1,46 @@
+{
+  "name": "data-transform-cli",
+  "version": "0.1.0",
+  "description": "Streaming-friendly CLI for YAML ↔ JSON ↔ CSV transforms for pipelines and shell use",
+  "type": "module",
+  "bin": {
+    "data-transform": "./src/cli.js"
+  },
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node src/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "cli",
+    "yaml",
+    "json",
+    "csv",
+    "transform",
+    "pipeline"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rmkr-dev/data-transform-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rmkr-dev/data-transform-cli/issues"
+  },
+  "homepage": "https://github.com/rmkr-dev/data-transform-cli#readme",
+  "dependencies": {
+    "commander": "^12.1.0",
+    "js-yaml": "^4.1.0"
+  }
+}

@@ -1,0 +1,12 @@
+[
+  {
+    "id": 1,
+    "name": "alpha",
+    "note": "hello, world"
+  },
+  {
+    "id": 2,
+    "name": "beta",
+    "note": "line1\nline2"
+  }
+]
