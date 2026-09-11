@@ -1,24 +1,19 @@
 # data-transform-cli
 
-Node.js ESM CLI for **YAML ↔ JSON ↔ CSV** transforms. Built for shell pipelines and local scripts.
+Python CLI for **YAML ↔ JSON ↔ CSV** transforms. Built for shell pipelines and local scripts.
 Streaming-friendly where practical (stdin/stdout; full documents buffered for parse safety).
 
-Requires **Node.js 20+**.
+Requires **Python 3.11+**.
 
 ## Install
 
 ```bash
-npm install -g .
-# or run without installing:
-npx --yes . to-json ./data.yaml
+pip install -e .
+# or with test extras:
+pip install -e ".[dev]"
 ```
 
-From a clone of this repo:
-
-```bash
-npm install
-npm link   # optional: exposes data-transform on your PATH
-```
+After install, the `data-transform` console script is on your `PATH`.
 
 ## Commands
 
@@ -63,46 +58,26 @@ printf "a: 1\n" | data-transform to-json -f yaml
 
 ### Library use
 
-```js
-import { convert, parse, serialize } from "data-transform-cli";
+```python
+from data_transform import convert, parse, serialize
 
-const yaml = convert("{\"a\":1}", "json", "yaml");
-const data = parse("id,name\n1,x\n", "csv");
-const json = serialize(data, "json", { pretty: true });
+yaml_text = convert('{"a":1}', "json", "yaml")
+data = parse("id,name\n1,x\n", "csv")
+json_text = serialize(data, "json", pretty=True)
 ```
 
 ## CSV notes
 
-CSV support is intentionally small and robust (RFC 4180-ish): quoted fields, escaped quotes (`""`), and newlines inside quotes. Object arrays use a header row; all cell values are strings when parsed from CSV.
+CSV support is intentionally small and robust (RFC 4180-ish) via the Python standard library `csv` module: quoted fields, escaped quotes (`""`), and newlines inside quotes. Object arrays use a header row; all cell values are strings when parsed from CSV.
 
 ## Development
 
 ```bash
-npm install
-npm test
+pip install -e ".[dev]"
+pytest
 ```
 
-Tests use Node built-in `node:test` runner with fixtures under `test/fixtures/` for JSON/YAML/CSV round-trips and CLI smoke checks.
-
-## Extending with coding agents
-
-### GitHub Copilot
-
-- Open this repo in VS Code / JetBrains with Copilot enabled.
-- Prefer asking Copilot to follow existing modules (`src/convert.js`, `src/csv.js`) and to add `node:test` cases beside fixtures.
-- Optional: add workspace guidance under `.github/copilot-instructions.md`.
-
-### Claude Code
-
-- From the repo root, open the folder in Claude Code (or its CLI).
-- Point it at `CONTRIBUTING.md` and ask for a failing test first, then implementation.
-- Keep changes ESM-compatible and avoid adding heavy CSV libraries unless needed.
-
-### OpenAI Codex
-
-- Open the project in Codex with this directory as the workspace.
-- Ask for command-level changes (`to-json`, `to-csv`, ...) and matching CLI tests in `test/cli.test.js`.
-- Remind the agent: no company names, no personal contacts, no generator authorship comments in committed files.
+Tests use **pytest** with fixtures under `tests/fixtures/` for JSON/YAML/CSV round-trips and CLI smoke checks.
 
 ## License
 
