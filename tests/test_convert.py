@@ -78,3 +78,34 @@ def test_pretty_and_minify_json():
 def test_csv_serialize_rejects_non_arrays():
     with pytest.raises(ValueError, match="array"):
         serialize({"a": 1}, "csv")
+
+
+def test_detects_ndjson_extensions():
+    assert detect_format("events.ndjson") == "ndjson"
+    assert detect_format("events.jsonl") == "ndjson"
+    assert detect_format("events.JSONL") == "ndjson"
+
+
+def test_infers_ndjson_from_multiline_json():
+    text = '{"a":1}\n{"b":2}\n'
+    assert infer_format(text) == "ndjson"
+    # Single JSON object still json
+    assert infer_format('{"a":1}') == "json"
+
+
+def test_ndjson_parse_and_serialize_roundtrip():
+    text = '{"a":1}\n{"b":2}\n'
+    data = parse(text, "ndjson")
+    assert data == [{"a": 1}, {"b": 2}]
+    out = serialize(data, "ndjson")
+    assert out == '{"a":1}\n{"b":2}\n'
+    assert parse(out, "ndjson") == data
+
+
+def test_ndjson_serialize_non_list():
+    assert serialize({"x": 1}, "ndjson") == '{"x":1}\n'
+
+
+def test_convert_json_array_to_ndjson():
+    out = convert('[{"a":1},{"b":2}]', "json", "ndjson")
+    assert out == '{"a":1}\n{"b":2}\n'

@@ -11,7 +11,7 @@ import yaml
 
 from .csv_io import parse_csv, stringify_csv
 
-FormatName = Literal["json", "yaml", "csv"]
+FormatName = Literal["json", "yaml", "csv", "ndjson"]
 
 
 def detect_format(filename: str | None) -> FormatName | None:
@@ -21,6 +21,8 @@ def detect_format(filename: str | None) -> FormatName | None:
     lower = str(filename).lower()
     # Support bare names and paths.
     name = Path(lower).name
+    if name.endswith(".ndjson") or name.endswith(".jsonl"):
+        return "ndjson"
     if name.endswith(".json"):
         return "json"
     if name.endswith(".yaml") or name.endswith(".yml"):
@@ -38,7 +40,20 @@ def parse(text: str, format: FormatName) -> Any:
         return yaml.safe_load(text)
     if format == "csv":
         return parse_csv(text)
+    if format == "ndjson":
+        return _parse_ndjson(text)
     raise ValueError(f"Unsupported parse format: {format}")
+
+
+def _parse_ndjson(text: str) -> list[Any]:
+    """Parse newline-delimited JSON into a list of values."""
+    values: list[Any] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        values.append(json.loads(stripped))
+    return values
 
 
 def serialize(
@@ -69,7 +84,19 @@ def serialize(
         if not isinstance(data, list):
             raise ValueError("CSV output requires an array (of objects or rows)")
         return stringify_csv(data)
+    if format == "ndjson":
+        return _serialize_ndjson(data)
     raise ValueError(f"Unsupported serialize format: {format}")
+
+
+def _serialize_ndjson(data: Any) -> str:
+    """Emit compact NDJSON: one JSON value per line."""
+    if isinstance(data, list):
+        lines = [
+            json.dumps(item, separators=(",", ":"), ensure_ascii=False) for item in data
+        ]
+        return ("\n".join(lines) + "\n") if lines else ""
+    return json.dumps(data, separators=(",", ":"), ensure_ascii=False) + "\n"
 
 
 def convert(
@@ -90,6 +117,9 @@ def infer_format(text: str) -> FormatName:
     trimmed = text.lstrip()
     if not trimmed:
         return "json"
+    # Prefer NDJSON when multiple non-empty lines each look like JSON values.
+    if _looks_like_ndjson(trimmed):
+        return "ndjson"
     if trimmed[0] in "{[":
         try:
             json.loads(text)
@@ -104,3 +134,20 @@ def infer_format(text: str) -> FormatName:
     ):
         return "csv"
     return "yaml"
+
+
+def _looks_like_ndjson(text: str) -> bool:
+    """True when two or more non-empty lines each parse as a JSON object/array."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return False
+    for line in lines:
+        if not line or line[0] not in "{[":
+            return False
+        try:
+            val = json.loads(line)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(val, (dict, list)):
+            return False
+    return True
