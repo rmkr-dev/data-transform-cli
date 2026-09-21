@@ -64,3 +64,74 @@ def test_to_json_minify_emits_compact_output():
     assert code == 0, stderr
     assert "\n  " not in stdout
     assert json.loads(stdout)
+
+
+def test_to_ndjson_from_json_array():
+    code, stdout, stderr = run_cli(
+        ["to-ndjson", "-f", "json"], '[{"a":1},{"b":2}]'
+    )
+    assert code == 0, stderr
+    lines = [ln for ln in stdout.splitlines() if ln]
+    assert lines == ['{"a":1}', '{"b":2}']
+
+
+def test_to_json_from_ndjson_stdin():
+    code, stdout, stderr = run_cli(
+        ["to-json", "-f", "ndjson", "--minify"], '{"a":1}\n{"b":2}\n'
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"a": 1}, {"b": 2}]
+
+
+def test_select_single_path():
+    code, stdout, stderr = run_cli(
+        ["select", "user.name", "-f", "json", "--minify"],
+        '{"user":{"name":"Ada"}}',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == "Ada"
+
+
+def test_select_multiple_paths_and_missing():
+    code, stdout, stderr = run_cli(
+        ["select", "a", "b", "-f", "json", "--minify"],
+        '{"a":1}',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == {"a": 1, "b": None}
+
+
+def test_select_list_index_path():
+    code, stdout, stderr = run_cli(
+        ["select", "items.0.id", "-f", "json", "--minify"],
+        '{"items":[{"id":7},{"id":8}]}',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == 7
+
+
+def test_select_invalid_path_exits_1():
+    code, stdout, stderr = run_cli(
+        ["select", "a..b", "-f", "json"],
+        '{"a":{"b":1}}',
+    )
+    assert code == 1
+    assert "error:" in stderr
+
+
+def test_pick_keys_from_object():
+    code, stdout, stderr = run_cli(
+        ["pick", "id", "name", "-f", "json", "--minify"],
+        '{"id":1,"name":"a","note":"x"}',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == {"id": 1, "name": "a"}
+
+
+def test_omit_keys_from_array():
+    code, stdout, stderr = run_cli(
+        ["omit", "note", "-f", "json", "--minify"],
+        '[{"id":1,"note":"x"},{"id":2,"note":"y"}]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"id": 1}, {"id": 2}]

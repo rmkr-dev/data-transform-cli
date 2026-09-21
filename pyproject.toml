@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "data-transform-cli"
-version = "0.1.0"
-description = "CLI for YAML ↔ JSON ↔ CSV transforms for pipelines and shell use"
+version = "0.2.0"
+description = "CLI for YAML ↔ JSON ↔ CSV ↔ NDJSON transforms for pipelines and shell use"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [{ name = "rmkr-dev" }]
-keywords = ["cli", "yaml", "json", "csv", "transform", "pipeline"]
+keywords = ["cli", "yaml", "json", "csv", "ndjson", "transform", "pipeline"]
 dependencies = [
   "click>=8.1",
   "PyYAML>=6.0",
