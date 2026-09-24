@@ -28,13 +28,17 @@ After install, the `data-transform` console script is on your `PATH`.
 | `select` | Extract dotted paths from parsed data |
 | `pick` | Keep only listed top-level keys |
 | `omit` | Drop listed top-level keys |
+| `filter` | Keep array items matching KEY OP VALUE |
+| `sort` | Sort array of objects by top-level KEY |
+| `unique` | Deduplicate array (by KEY or whole item) |
 
 ### Options (most commands)
 
 - `[file]` — input path; omit or use `-` for stdin
 - `-o, --output <file>` — write to a file instead of stdout
 - `-f, --from <format>` — force input format: `json` | `yaml` | `csv` | `ndjson`
-- `--minify` — compact JSON output (`to-json`, `select`, `pick`, `omit`)
+- `--minify` — compact JSON output (`to-json`, `select`, `pick`, `omit`, `filter`, `sort`, `unique`)
+- `--desc` — reverse sort order (`sort` only)
 
 Format is taken from `--from`, else the file extension (`.ndjson` / `.jsonl` → ndjson), else simple content heuristics.
 
@@ -92,16 +96,68 @@ echo '{"id":1,"secret":"x","name":"a"}' \
 # → {"id":1,"name":"a"}
 ```
 
+### Filter, sort, unique
+
+These commands require a **list** root (JSON/YAML/CSV/NDJSON array). Non-object
+items are dropped by `filter`. Missing keys sort last (first with `--desc`).
+
+```bash
+# Keep rows where age >= 30 (numeric when both sides look like numbers)
+echo '[{"name":"Ada","age":36},{"name":"Bob","age":22}]' \
+  | data-transform filter age ge 30 -f json --minify
+# → [{"name":"Ada","age":36}]
+
+# String contains / key exists (VALUE optional for exists)
+echo '[{"role":"admin"},{"role":"user"}]' \
+  | data-transform filter role contains adm -f json --minify
+# → [{"role":"admin"}]
+
+echo '[{"id":1,"note":"x"},{"id":2}]' \
+  | data-transform filter note exists -f json --minify
+# → [{"id":1,"note":"x"}]
+
+# Sort by key (ascending / descending)
+echo '[{"id":2},{"id":1},{"id":3}]' \
+  | data-transform sort id -f json --minify
+# → [{"id":1},{"id":2},{"id":3}]
+
+echo '[{"id":2},{"id":1}]' \
+  | data-transform sort id --desc -f json --minify
+# → [{"id":2},{"id":1}]
+
+# Deduplicate whole items, or by a key (first wins)
+echo '[{"id":1},{"id":1},{"id":2}]' \
+  | data-transform unique id -f json --minify
+# → [{"id":1},{"id":2}]
+
+echo '[{"a":1},{"a":1},{"b":2}]' \
+  | data-transform unique -f json --minify
+# → [{"a":1},{"b":2}]
+```
+
 ### Library use
 
 ```python
-from data_transform import convert, parse, serialize, get_path, pick_keys, omit_keys
+from data_transform import (
+    convert,
+    parse,
+    serialize,
+    get_path,
+    pick_keys,
+    omit_keys,
+    filter_rows,
+    sort_rows,
+    unique_rows,
+)
 
 yaml_text = convert('{"a":1}', "json", "yaml")
 data = parse("id,name\n1,x\n", "csv")
 json_text = serialize(data, "json", pretty=True)
 name = get_path({"user": {"name": "Ada"}}, "user.name")
 slim = pick_keys({"id": 1, "name": "a", "note": "x"}, ["id", "name"])
+adults = filter_rows([{"age": 36}, {"age": 22}], "age", "ge", "30")
+ordered = sort_rows([{"id": 2}, {"id": 1}], "id")
+deduped = unique_rows([{"id": 1}, {"id": 1}], "id")
 ```
 
 ## NDJSON notes

@@ -135,3 +135,61 @@ def test_omit_keys_from_array():
     )
     assert code == 0, stderr
     assert json.loads(stdout) == [{"id": 1}, {"id": 2}]
+
+
+def test_filter_ge_from_stdin():
+    code, stdout, stderr = run_cli(
+        ["filter", "age", "ge", "30", "-f", "json", "--minify"],
+        '[{"name":"Ada","age":36},{"name":"Bob","age":22}]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"name": "Ada", "age": 36}]
+
+
+def test_filter_exists_and_non_list_error():
+    code, stdout, stderr = run_cli(
+        ["filter", "note", "exists", "-f", "json", "--minify"],
+        '[{"id":1,"note":"x"},{"id":2}]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"id": 1, "note": "x"}]
+
+    code, stdout, stderr = run_cli(
+        ["filter", "a", "eq", "1", "-f", "json"],
+        '{"a":1}',
+    )
+    assert code == 1
+    assert "error:" in stderr
+    assert "list" in stderr.lower()
+
+
+def test_sort_and_sort_desc():
+    code, stdout, stderr = run_cli(
+        ["sort", "id", "-f", "json", "--minify"],
+        '[{"id":2},{"id":1},{"id":3}]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"id": 1}, {"id": 2}, {"id": 3}]
+
+    code, stdout, stderr = run_cli(
+        ["sort", "id", "--desc", "-f", "json", "--minify"],
+        '[{"id":2},{"id":1}]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"id": 2}, {"id": 1}]
+
+
+def test_unique_by_key_and_whole():
+    code, stdout, stderr = run_cli(
+        ["unique", "id", "-f", "json", "--minify"],
+        '[{"id":1,"n":"a"},{"id":1,"n":"b"},{"id":2}]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"id": 1, "n": "a"}, {"id": 2}]
+
+    code, stdout, stderr = run_cli(
+        ["unique", "-f", "json", "--minify"],
+        '[{"a":1},{"a":1},{"b":2}]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"a": 1}, {"b": 2}]
