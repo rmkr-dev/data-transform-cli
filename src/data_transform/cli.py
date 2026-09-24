@@ -10,7 +10,7 @@ import click
 
 from . import __version__
 from .convert import convert, detect_format, infer_format, parse, serialize
-from .shape import get_path, omit_keys, pick_keys
+from .shape import filter_rows, get_path, omit_keys, pick_keys, sort_rows, unique_rows
 
 FORMAT_CHOICES = ["json", "yaml", "csv", "ndjson"]
 
@@ -336,6 +336,154 @@ def omit_cmd(
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
+
+
+
+@main.command("filter")
+@click.argument("tokens", nargs=-1, required=True)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="input format: json | yaml | csv | ndjson",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+def filter_cmd(
+    tokens: tuple[str, ...],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+) -> None:
+    """Keep array items where KEY OP VALUE matches.
+
+    Operators: eq, ne, gt, ge, lt, le, contains, exists.
+    Non-object items are dropped. Root must be a list.
+
+    Usage: data-transform filter KEY OP VALUE [file]
+    """
+    try:
+        parts, input_file = _split_tokens_and_file(tokens)
+        if len(parts) < 2:
+            raise ValueError("Usage: filter KEY OP [VALUE] [file]")
+        key, op = parts[0], parts[1]
+        op_l = op.lower()
+        if op_l == "exists":
+            if len(parts) > 3:
+                raise ValueError("Usage: filter KEY exists [file]")
+            # Optional ignored VALUE may appear as third token
+            value = parts[2] if len(parts) == 3 else None
+        else:
+            if len(parts) != 3:
+                raise ValueError("Usage: filter KEY OP VALUE [file]")
+            value = parts[2]
+
+        text, name = load_input(input_file)
+        src = resolve_from(text, name, from_format)
+        data = parse(text, src)  # type: ignore[arg-type]
+        result = filter_rows(data, key, op, value)
+        write_output(
+            serialize(result, "json", pretty=not minify, minify=minify), output
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(1)
+
+
+@main.command("sort")
+@click.argument("tokens", nargs=-1, required=True)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="input format: json | yaml | csv | ndjson",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@click.option("--desc", is_flag=True, default=False, help="sort descending")
+def sort_cmd(
+    tokens: tuple[str, ...],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+    desc: bool,
+) -> None:
+    """Sort an array of objects by top-level KEY.
+
+    Missing keys sort last (first with --desc). Root must be a list.
+
+    Usage: data-transform sort KEY [file]
+    """
+    try:
+        parts, input_file = _split_tokens_and_file(tokens)
+        if len(parts) != 1:
+            raise ValueError("Usage: sort KEY [file]")
+        key = parts[0]
+
+        text, name = load_input(input_file)
+        src = resolve_from(text, name, from_format)
+        data = parse(text, src)  # type: ignore[arg-type]
+        result = sort_rows(data, key, desc=desc)
+        write_output(
+            serialize(result, "json", pretty=not minify, minify=minify), output
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(1)
+
+
+@main.command("unique")
+@click.argument("tokens", nargs=-1, required=False)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="input format: json | yaml | csv | ndjson",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+def unique_cmd(
+    tokens: tuple[str, ...],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+) -> None:
+    """Deduplicate an array (order-preserving, first wins).
+
+    With KEY, dedupe by that top-level key. Without KEY, dedupe by whole item.
+    Root must be a list.
+
+    Usage: data-transform unique [KEY] [file]
+    """
+    try:
+        parts, input_file = _split_tokens_and_file(tokens)
+        # If a single token looks like a file and was not peeled off (e.g. path
+        # that does not exist yet / stdin already handled), treat it as KEY.
+        # When tokens was only a file path that exists, _split peels it and
+        # parts is empty → no key.
+        key: Optional[str] = None
+        if len(parts) == 1:
+            key = parts[0]
+        elif len(parts) > 1:
+            raise ValueError("Usage: unique [KEY] [file]")
+
+        text, name = load_input(input_file)
+        src = resolve_from(text, name, from_format)
+        data = parse(text, src)  # type: ignore[arg-type]
+        result = unique_rows(data, key)
+        write_output(
+            serialize(result, "json", pretty=not minify, minify=minify), output
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(1)
+
 
 
 if __name__ == "__main__":
