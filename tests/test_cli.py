@@ -193,3 +193,186 @@ def test_unique_by_key_and_whole():
     )
     assert code == 0, stderr
     assert json.loads(stdout) == [{"a": 1}, {"b": 2}]
+
+
+def test_rename_pairs_from_stdin():
+    code, stdout, stderr = run_cli(
+        ["rename", "name", "title", "note", "comment", "-f", "json", "--minify"],
+        '{"id":1,"name":"Ada","note":"x"}',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == {"id": 1, "title": "Ada", "comment": "x"}
+
+
+def test_rename_array_missing_key_and_file():
+    code, stdout, stderr = run_cli(
+        ["rename", "name", "title", "-f", "json", "--minify"],
+        '[{"name":"Ada"},{"id":2},1]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"title": "Ada"}, {"id": 2}, 1]
+
+    code, stdout, stderr = run_cli(
+        ["rename", "name", "title", str(FIXTURE / "sample.json"), "--minify"]
+    )
+    assert code == 0, stderr
+    data = json.loads(stdout)
+    assert data[0]["title"] == "alpha"
+    assert "name" not in data[0]
+    assert data[0]["note"] == "hello, world"
+    assert data[1]["title"] == "beta"
+
+
+def test_rename_odd_pairs_and_duplicate_old():
+    code, stdout, stderr = run_cli(
+        ["rename", "only", "-f", "json"],
+        '{"a":1}',
+    )
+    assert code == 1
+    assert stdout == ""
+    assert "error:" in stderr
+    assert "OLD NEW" in stderr
+
+    code, stdout, stderr = run_cli(
+        ["rename", "a", "x", "a", "y", "-f", "json", "--minify"],
+        '{"a":1,"b":2}',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == {"y": 1, "b": 2}
+
+
+def test_flatten_nested_and_custom_sep():
+    code, stdout, stderr = run_cli(
+        ["flatten", "-f", "json", "--minify"],
+        '{"user":{"name":"Ada","addr":{"city":"London"}},"tags":["a","b"]}',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == {
+        "user.name": "Ada",
+        "user.addr.city": "London",
+        "tags": ["a", "b"],
+    }
+
+    code, stdout, stderr = run_cli(
+        ["flatten", "--sep", "_", "-f", "json", "--minify"],
+        '{"user":{"name":"Ada"}}',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == {"user_name": "Ada"}
+
+
+def test_flatten_list_root_passthrough_and_empty_sep():
+    code, stdout, stderr = run_cli(
+        ["flatten", "-f", "json", "--minify"],
+        '[{"user":{"name":"Ada"}},2]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"user.name": "Ada"}, 2]
+
+    code, stdout, stderr = run_cli(["flatten", "-f", "json", "--minify"], "42")
+    assert code == 0, stderr
+    assert json.loads(stdout) == 42
+
+    code, stdout, stderr = run_cli(
+        ["flatten", "--sep", "", "-f", "json"],
+        '{"a":{"b":1}}',
+    )
+    assert code == 1
+    assert "error:" in stderr
+    assert "separator" in stderr
+
+
+def test_head_and_tail_from_stdin_and_file():
+    code, stdout, stderr = run_cli(
+        ["head", "2", "-f", "json", "--minify"],
+        '[{"id":1},{"id":2},{"id":3}]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"id": 1}, {"id": 2}]
+
+    code, stdout, stderr = run_cli(
+        ["tail", "1", "-f", "json", "--minify"],
+        '[{"id":1},{"id":2},{"id":3}]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"id": 3}]
+
+    code, stdout, stderr = run_cli(
+        ["head", "1", str(FIXTURE / "sample.json"), "--minify"]
+    )
+    assert code == 0, stderr
+    data = json.loads(stdout)
+    assert data == [
+        {"id": 1, "name": "alpha", "note": "hello, world"},
+    ]
+
+
+def test_head_tail_clamp_zero_and_errors(tmp_path):
+    code, stdout, stderr = run_cli(
+        ["head", "0", "-f", "json", "--minify"],
+        "[1,2,3]",
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == []
+
+    code, stdout, stderr = run_cli(
+        ["tail", "0", "-f", "json", "--minify"],
+        "[1,2,3]",
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == []
+
+    code, stdout, stderr = run_cli(
+        ["head", "9", "-f", "json", "--minify"],
+        "[1,2]",
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [1, 2]
+
+    code, stdout, stderr = run_cli(
+        ["tail", "9", "-f", "json", "--minify"],
+        "[1,2]",
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [1, 2]
+
+    dest = tmp_path / "out.json"
+    code, stdout, stderr = run_cli(
+        ["head", "1", "-f", "json", "--minify", "-o", str(dest)],
+        "[1,2,3]",
+    )
+    assert code == 0, stderr
+    assert stdout == ""
+    assert json.loads(dest.read_text(encoding="utf-8")) == [1]
+
+    code, stdout, stderr = run_cli(
+        ["head", "1", "-f", "json"],
+        '{"a":1}',
+    )
+    assert code == 1
+    assert "error:" in stderr
+    assert "list" in stderr.lower()
+
+    code, stdout, stderr = run_cli(
+        ["tail", "nope", "-f", "json"],
+        "[1,2,3]",
+    )
+    assert code == 1
+    assert "error:" in stderr
+    assert "non-negative" in stderr
+
+    code, stdout, stderr = run_cli(
+        ["head", "-1", "-f", "json"],
+        "[1,2,3]",
+    )
+    assert code == 1
+    assert "error:" in stderr
+    assert "non-negative" in stderr
+
+    code, stdout, stderr = run_cli(
+        ["head", "1", "2", "-f", "json"],
+        "[1,2,3]",
+    )
+    assert code == 1
+    assert "error:" in stderr
+    assert "Usage:" in stderr

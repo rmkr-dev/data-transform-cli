@@ -10,7 +10,18 @@ import click
 
 from . import __version__
 from .convert import convert, detect_format, infer_format, parse, serialize
-from .shape import filter_rows, get_path, omit_keys, pick_keys, sort_rows, unique_rows
+from .shape import (
+    filter_rows,
+    flatten_object,
+    get_path,
+    head_rows,
+    omit_keys,
+    pick_keys,
+    rename_keys,
+    sort_rows,
+    tail_rows,
+    unique_rows,
+)
 
 FORMAT_CHOICES = ["json", "yaml", "csv", "ndjson"]
 
@@ -42,6 +53,25 @@ def write_output(out: str, output_path: Optional[str]) -> None:
         Path(output_path).write_text(out, encoding="utf-8")
     else:
         sys.stdout.write(out)
+
+
+def _parse_count(token: str, command: str) -> int:
+    """Parse a non-negative integer count from a CLI token."""
+    if token == "" or any(ch < "0" or ch > "9" for ch in token):
+        raise ValueError(
+            f"{command}: N must be a non-negative integer, got {token!r}"
+        )
+    return int(token)
+
+
+def _parse_rename_pairs(parts: Sequence[str]) -> dict[str, str]:
+    """Build an OLD→NEW map from an even list of tokens. Later pairs win."""
+    if len(parts) < 2 or len(parts) % 2 != 0:
+        raise ValueError("Usage: rename OLD NEW [OLD NEW ...] [file]")
+    mapping: dict[str, str] = {}
+    for index in range(0, len(parts), 2):
+        mapping[parts[index]] = parts[index + 1]
+    return mapping
 
 
 def _split_tokens_and_file(tokens: Sequence[str]) -> tuple[list[str], Optional[str]]:
@@ -484,6 +514,178 @@ def unique_cmd(
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
 
+
+@main.command("rename")
+@click.argument("tokens", nargs=-1, required=True)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="input format: json | yaml | csv | ndjson",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+def rename_cmd(
+    tokens: tuple[str, ...],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+) -> None:
+    """Rename top-level keys (OLD NEW pairs) on an object or each object in an array.
+
+    Missing OLD keys are left unchanged. Non-object items in an array are
+    unchanged. Later pairs win when OLD is repeated.
+
+    Usage: data-transform rename OLD NEW [OLD NEW ...] [file]
+    """
+    try:
+        parts, input_file = _split_tokens_and_file(tokens)
+        mapping = _parse_rename_pairs(parts)
+
+        text, name = load_input(input_file)
+        src = resolve_from(text, name, from_format)
+        data = parse(text, src)  # type: ignore[arg-type]
+        result = rename_keys(data, mapping)
+        write_output(
+            serialize(result, "json", pretty=not minify, minify=minify), output
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(1)
+
+
+@main.command("flatten")
+@click.argument("file", required=False)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="input format: json | yaml | csv | ndjson",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@click.option(
+    "--sep",
+    default=".",
+    show_default=True,
+    help="separator between nested keys",
+)
+def flatten_cmd(
+    file: Optional[str],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+    sep: str,
+) -> None:
+    """Flatten nested objects into separator-joined top-level keys.
+
+    Maps over a list root. Nested lists stay as values. Empty objects stay
+    empty. A non-object, non-list root is unchanged.
+
+    Usage: data-transform flatten [file]
+    """
+    try:
+        text, name = load_input(file)
+        src = resolve_from(text, name, from_format)
+        data = parse(text, src)  # type: ignore[arg-type]
+        result = flatten_object(data, sep)
+        write_output(
+            serialize(result, "json", pretty=not minify, minify=minify), output
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(1)
+
+
+def _run_take(
+    command: str,
+    tokens: Sequence[str],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+) -> None:
+    """Shared runner for head/tail."""
+    try:
+        parts, input_file = _split_tokens_and_file(tokens)
+        if len(parts) != 1:
+            raise ValueError(f"Usage: {command} N [file]")
+        count = _parse_count(parts[0], command)
+
+        text, name = load_input(input_file)
+        src = resolve_from(text, name, from_format)
+        data = parse(text, src)  # type: ignore[arg-type]
+        if command == "head":
+            result = head_rows(data, count)
+        else:
+            result = tail_rows(data, count)
+        write_output(
+            serialize(result, "json", pretty=not minify, minify=minify), output
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(1)
+
+
+# ignore_unknown_options lets a leading "-1" through as N so the count check
+# can reject it, instead of Click treating it as a short flag.
+@main.command("head", context_settings={"ignore_unknown_options": True})
+@click.argument("tokens", nargs=-1, required=True)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="input format: json | yaml | csv | ndjson",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+def head_cmd(
+    tokens: tuple[str, ...],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+) -> None:
+    """Return the first N items of a list.
+
+    N must be a non-negative integer. Counts past the end return the whole
+    list. Root must be a list.
+
+    Usage: data-transform head N [file]
+    """
+    _run_take("head", tokens, output, from_format, minify)
+
+
+@main.command("tail", context_settings={"ignore_unknown_options": True})
+@click.argument("tokens", nargs=-1, required=True)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="input format: json | yaml | csv | ndjson",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+def tail_cmd(
+    tokens: tuple[str, ...],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+) -> None:
+    """Return the last N items of a list.
+
+    N must be a non-negative integer. Counts past the end return the whole
+    list. Root must be a list.
+
+    Usage: data-transform tail N [file]
+    """
+    _run_take("tail", tokens, output, from_format, minify)
 
 
 if __name__ == "__main__":
