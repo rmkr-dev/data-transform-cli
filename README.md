@@ -28,17 +28,22 @@ After install, the `data-transform` console script is on your `PATH`.
 | `select` | Extract dotted paths from parsed data |
 | `pick` | Keep only listed top-level keys |
 | `omit` | Drop listed top-level keys |
+| `rename` | Rename top-level keys (`OLD NEW` pairs) |
+| `flatten` | Flatten nested objects into joined keys |
 | `filter` | Keep array items matching KEY OP VALUE |
 | `sort` | Sort array of objects by top-level KEY |
 | `unique` | Deduplicate array (by KEY or whole item) |
+| `head` | First N items of a list |
+| `tail` | Last N items of a list |
 
 ### Options (most commands)
 
 - `[file]` — input path; omit or use `-` for stdin
 - `-o, --output <file>` — write to a file instead of stdout
 - `-f, --from <format>` — force input format: `json` | `yaml` | `csv` | `ndjson`
-- `--minify` — compact JSON output (`to-json`, `select`, `pick`, `omit`, `filter`, `sort`, `unique`)
+- `--minify` — compact JSON output (`to-json`, `select`, `pick`, `omit`, `rename`, `flatten`, `filter`, `sort`, `unique`, `head`, `tail`)
 - `--desc` — reverse sort order (`sort` only)
+- `--sep <text>` — separator between nested keys (`flatten` only, default `.`)
 
 Format is taken from `--from`, else the file extension (`.ndjson` / `.jsonl` → ndjson), else simple content heuristics.
 
@@ -96,6 +101,34 @@ echo '{"id":1,"secret":"x","name":"a"}' \
 # → {"id":1,"name":"a"}
 ```
 
+### Rename and flatten
+
+`rename` takes pairs of `OLD NEW` and maps over an object or each object in an array, the same way `pick` and `omit` do. Missing old keys are left alone. A later pair wins when the same old key is given twice. Renames are one pass over the original keys: `a→b` together with `b→c` leaves the value of `a` under `b`.
+
+`flatten` collapses nested objects into top-level keys joined by `--sep` (default `.`). A list root is flattened item by item. Nested lists stay as values. Empty objects stay empty. A number, string, or other non-object root is returned unchanged.
+
+```bash
+# Rename top-level keys (several pairs)
+echo '{"id":1,"name":"Ada","note":"x"}' \
+  | data-transform rename name title note comment -f json --minify
+# → {"id":1,"title":"Ada","comment":"x"}
+
+# Same mapping over an array; missing keys are a no-op
+echo '[{"name":"Ada"},{"id":2},1]' \
+  | data-transform rename name title -f json --minify
+# → [{"title":"Ada"},{"id":2},1]
+
+# Flatten nested objects; lists stay as values
+echo '{"user":{"name":"Ada","city":"London"},"tags":["a","b"]}' \
+  | data-transform flatten -f json --minify
+# → {"user.name":"Ada","user.city":"London","tags":["a","b"]}
+
+# Custom separator
+echo '{"user":{"name":"Ada"}}' \
+  | data-transform flatten --sep _ -f json --minify
+# → {"user_name":"Ada"}
+```
+
 ### Filter, sort, unique
 
 These commands require a **list** root (JSON/YAML/CSV/NDJSON array). Non-object
@@ -135,6 +168,23 @@ echo '[{"a":1},{"a":1},{"b":2}]' \
 # → [{"a":1},{"b":2}]
 ```
 
+### Head and tail
+
+`head` and `tail` require a **list** root, same as `filter`, `sort`, and `unique`. `N` is a non-negative integer. A count past the end returns the items that exist; `0` returns an empty list.
+
+```bash
+echo '[{"id":1},{"id":2},{"id":3}]' \
+  | data-transform head 2 -f json --minify
+# → [{"id":1},{"id":2}]
+
+echo '[{"id":1},{"id":2},{"id":3}]' \
+  | data-transform tail 1 -f json --minify
+# → [{"id":3}]
+
+echo '[1,2,3]' | data-transform head 0 -f json --minify
+# → []
+```
+
 ### Library use
 
 ```python
@@ -145,9 +195,13 @@ from data_transform import (
     get_path,
     pick_keys,
     omit_keys,
+    rename_keys,
+    flatten_object,
     filter_rows,
     sort_rows,
     unique_rows,
+    head_rows,
+    tail_rows,
 )
 
 yaml_text = convert('{"a":1}', "json", "yaml")
@@ -155,9 +209,13 @@ data = parse("id,name\n1,x\n", "csv")
 json_text = serialize(data, "json", pretty=True)
 name = get_path({"user": {"name": "Ada"}}, "user.name")
 slim = pick_keys({"id": 1, "name": "a", "note": "x"}, ["id", "name"])
+renamed = rename_keys({"id": 1, "name": "a"}, {"name": "title"})
+flat = flatten_object({"user": {"name": "Ada"}, "tags": ["x"]})
 adults = filter_rows([{"age": 36}, {"age": 22}], "age", "ge", "30")
 ordered = sort_rows([{"id": 2}, {"id": 1}], "id")
 deduped = unique_rows([{"id": 1}, {"id": 1}], "id")
+first = head_rows([{"id": 1}, {"id": 2}, {"id": 3}], 2)
+last = tail_rows([{"id": 1}, {"id": 2}, {"id": 3}], 1)
 ```
 
 ## NDJSON notes
