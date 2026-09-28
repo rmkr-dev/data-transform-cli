@@ -1,4 +1,4 @@
-"""Path extraction and object key shaping helpers."""
+"""Path extraction, key shaping, and list slicing helpers."""
 
 from __future__ import annotations
 
@@ -88,6 +88,71 @@ def _omit_one(item: Any, drop: set[str]) -> Any:
     if not isinstance(item, Mapping):
         return item
     return {k: v for k, v in item.items() if k not in drop}
+
+
+def rename_keys(data: Any, mapping: Mapping[str, str]) -> Any:
+    """
+    Rename top-level keys on an object, or on each object in a list.
+
+    Non-mapping items in a list are left unchanged. A non-mapping, non-list
+    root is returned unchanged. Keys absent from ``mapping`` are kept (missing
+    OLD keys are no-ops). Renames apply in one pass over the original keys, so
+    a key is not renamed again after it is written. When two original keys
+    produce the same new name, the later key wins.
+    """
+    if not isinstance(mapping, Mapping):
+        raise ValueError("rename: expected a mapping of old keys to new keys")
+    pairs = dict(mapping)
+    if isinstance(data, list):
+        return [_rename_one(item, pairs) for item in data]
+    return _rename_one(data, pairs)
+
+
+def _rename_one(item: Any, mapping: Mapping[Any, Any]) -> Any:
+    if not isinstance(item, Mapping):
+        return item
+    renamed: dict[Any, Any] = {}
+    for key, value in item.items():
+        new_key = mapping[key] if key in mapping else key
+        renamed[new_key] = value
+    return renamed
+
+
+def flatten_object(data: Any, sep: str = ".") -> Any:
+    """
+    Flatten nested mappings into ``sep``-joined top-level keys.
+
+    A list root is mapped item-wise; non-mapping items are left unchanged.
+    Nested lists are kept as values and are not expanded into indexed keys.
+    Empty mappings are left as values. A non-mapping, non-list root is
+    returned unchanged. An empty separator raises ValueError. When two paths
+    collide, the later value wins.
+    """
+    if not isinstance(sep, str) or sep == "":
+        raise ValueError("flatten: separator must be a non-empty string")
+    if isinstance(data, list):
+        return [_flatten_one(item, sep) for item in data]
+    return _flatten_one(data, sep)
+
+
+def _flatten_one(item: Any, sep: str) -> Any:
+    if not isinstance(item, Mapping):
+        return item
+    flat: dict[str, Any] = {}
+    _flatten_mapping(item, sep, "", flat)
+    return flat
+
+
+def _flatten_mapping(
+    mapping: Mapping[Any, Any], sep: str, prefix: str, out: dict[str, Any]
+) -> None:
+    for key, value in mapping.items():
+        name = key if isinstance(key, str) else str(key)
+        path = f"{prefix}{sep}{name}" if prefix else name
+        if isinstance(value, Mapping) and value:
+            _flatten_mapping(value, sep, path, out)
+        else:
+            out[path] = value
 
 
 def _require_list(data: Any, command: str) -> list[Any]:
@@ -244,3 +309,37 @@ def unique_rows(data: Any, key: str | None = None) -> list[Any]:
         seen.add(marker)
         out.append(item)
     return out
+
+
+def _require_count(n: Any, command: str) -> int:
+    """Raise ValueError unless n is a non-negative integer (not bool)."""
+    if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+        raise ValueError(f"{command}: N must be a non-negative integer, got {n!r}")
+    return n
+
+
+def head_rows(data: Any, n: int) -> list[Any]:
+    """
+    Return the first ``n`` items of a list root.
+
+    ``n`` must be a non-negative integer. Counts larger than the list return
+    the whole list. ``n == 0`` returns an empty list.
+    """
+    rows = _require_list(data, "head")
+    count = _require_count(n, "head")
+    return rows[:count]
+
+
+def tail_rows(data: Any, n: int) -> list[Any]:
+    """
+    Return the last ``n`` items of a list root.
+
+    ``n`` must be a non-negative integer. Counts larger than the list return
+    the whole list. ``n == 0`` returns an empty list.
+    """
+    rows = _require_list(data, "tail")
+    count = _require_count(n, "tail")
+    # rows[-0:] returns the whole list, so zero is handled on its own.
+    if count == 0:
+        return []
+    return rows[-count:]
