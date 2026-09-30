@@ -30,20 +30,23 @@ After install, the `data-transform` console script is on your `PATH`.
 | `omit` | Drop listed top-level keys |
 | `rename` | Rename top-level keys (`OLD NEW` pairs) |
 | `flatten` | Flatten nested objects into joined keys |
+| `unflatten` | Expand joined keys back into nested objects |
 | `filter` | Keep array items matching KEY OP VALUE |
 | `sort` | Sort array of objects by top-level KEY |
 | `unique` | Deduplicate array (by KEY or whole item) |
 | `head` | First N items of a list |
 | `tail` | Last N items of a list |
+| `group-by` | Group array of objects by top-level KEY |
+| `count` | Count items, per KEY value, or per group |
 
 ### Options (most commands)
 
 - `[file]` — input path; omit or use `-` for stdin
 - `-o, --output <file>` — write to a file instead of stdout
 - `-f, --from <format>` — force input format: `json` | `yaml` | `csv` | `ndjson`
-- `--minify` — compact JSON output (`to-json`, `select`, `pick`, `omit`, `rename`, `flatten`, `filter`, `sort`, `unique`, `head`, `tail`)
+- `--minify` — compact JSON output (`to-json`, `select`, `pick`, `omit`, `rename`, `flatten`, `unflatten`, `filter`, `sort`, `unique`, `head`, `tail`, `group-by`, `count`)
 - `--desc` — reverse sort order (`sort` only)
-- `--sep <text>` — separator between nested keys (`flatten` only, default `.`)
+- `--sep <text>` — separator between nested keys (`flatten` and `unflatten`, default `.`)
 
 Format is taken from `--from`, else the file extension (`.ndjson` / `.jsonl` → ndjson), else simple content heuristics.
 
@@ -129,6 +132,23 @@ echo '{"user":{"name":"Ada"}}' \
 # → {"user_name":"Ada"}
 ```
 
+### Unflatten
+
+`unflatten` is the inverse of `flatten`: it splits top-level keys on `--sep` (default `.`) and rebuilds nested objects. Like `flatten`, it maps over a list root and returns non-object roots and items unchanged. It does not rebuild lists, so a segment like `0` stays an object key. Keys are split literally, so an empty segment (`a..b`) becomes an empty key. If an object value and joined keys write to the same branch, they are merged. If a path runs into a non-object value, the later key wins. `unflatten` undoes `flatten` exactly as long as the original keys don't contain the separator.
+
+```bash
+echo '{"user.name":"Ada","user.addr.city":"London","tags":["a","b"]}' \
+  | data-transform unflatten -f json --minify
+# → {"user":{"name":"Ada","addr":{"city":"London"}},"tags":["a","b"]}
+
+echo '[{"user_name":"Ada"},{"user_name":"Bob"}]' \
+  | data-transform unflatten --sep _ -f json --minify
+# → [{"user":{"name":"Ada"}},{"user":{"name":"Bob"}}]
+
+# Round trip
+data-transform flatten nested.json | data-transform unflatten
+```
+
 ### Filter, sort, unique
 
 These commands require a **list** root (JSON/YAML/CSV/NDJSON array). Non-object
@@ -185,6 +205,38 @@ echo '[1,2,3]' | data-transform head 0 -f json --minify
 # → []
 ```
 
+### Group-by and count
+
+`group-by KEY` requires a **list** root. It returns an object that maps each value of top-level `KEY` to the list of items that have it. Groups appear in the order they are first seen, and items keep their input order. Group labels are the value itself for strings; any other value becomes compact JSON text (`1` → `"1"`, `true` → `"true"`, `null` → `"null"`). This means `1` and `"1"` end up in the same group, which suits CSV input where every value is a string. Non-object items and objects without `KEY` are dropped.
+
+`count` counts records:
+
+- `count` on a list prints its length as a number.
+- `count KEY` on a list prints an object of per-value counts, using the same labels and dropping rules as `group-by`.
+- `count` on the output of `group-by` (an object whose values are all lists) prints the size of each group.
+
+Any other root is an error.
+
+```bash
+echo '[{"team":"a","id":1},{"team":"b","id":2},{"team":"a","id":3},{"id":4}]' \
+  | data-transform group-by team -f json --minify
+# → {"a":[{"team":"a","id":1},{"team":"a","id":3}],"b":[{"team":"b","id":2}]}
+
+echo '[{"id":1},{"id":2},{"id":3}]' | data-transform count -f json
+# → 3
+
+echo '[{"team":"a"},{"team":"b"},{"team":"a"}]' \
+  | data-transform count team -f json --minify
+# → {"a":2,"b":1}
+
+# Count per group from group-by output
+data-transform group-by team people.json | data-transform count --minify
+# → {"a":2,"b":1}
+
+# Works with NDJSON / CSV too
+data-transform count status events.ndjson
+```
+
 ### Library use
 
 ```python
@@ -197,11 +249,14 @@ from data_transform import (
     omit_keys,
     rename_keys,
     flatten_object,
+    unflatten_object,
     filter_rows,
     sort_rows,
     unique_rows,
     head_rows,
     tail_rows,
+    group_rows,
+    count_rows,
 )
 
 yaml_text = convert('{"a":1}', "json", "yaml")
@@ -211,11 +266,15 @@ name = get_path({"user": {"name": "Ada"}}, "user.name")
 slim = pick_keys({"id": 1, "name": "a", "note": "x"}, ["id", "name"])
 renamed = rename_keys({"id": 1, "name": "a"}, {"name": "title"})
 flat = flatten_object({"user": {"name": "Ada"}, "tags": ["x"]})
+nested = unflatten_object({"user.name": "Ada"})
 adults = filter_rows([{"age": 36}, {"age": 22}], "age", "ge", "30")
 ordered = sort_rows([{"id": 2}, {"id": 1}], "id")
 deduped = unique_rows([{"id": 1}, {"id": 1}], "id")
 first = head_rows([{"id": 1}, {"id": 2}, {"id": 3}], 2)
 last = tail_rows([{"id": 1}, {"id": 2}, {"id": 3}], 1)
+by_team = group_rows([{"team": "a"}, {"team": "b"}], "team")
+total = count_rows([{"id": 1}, {"id": 2}])
+per_team = count_rows([{"team": "a"}, {"team": "a"}], "team")
 ```
 
 ## NDJSON notes
