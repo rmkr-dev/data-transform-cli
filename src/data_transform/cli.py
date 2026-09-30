@@ -11,15 +11,18 @@ import click
 from . import __version__
 from .convert import convert, detect_format, infer_format, parse, serialize
 from .shape import (
+    count_rows,
     filter_rows,
     flatten_object,
     get_path,
+    group_rows,
     head_rows,
     omit_keys,
     pick_keys,
     rename_keys,
     sort_rows,
     tail_rows,
+    unflatten_object,
     unique_rows,
 )
 
@@ -601,6 +604,51 @@ def flatten_cmd(
         sys.exit(1)
 
 
+@main.command("unflatten")
+@click.argument("file", required=False)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="input format: json | yaml | csv | ndjson",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@click.option(
+    "--sep",
+    default=".",
+    show_default=True,
+    help="separator between nested keys",
+)
+def unflatten_cmd(
+    file: Optional[str],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+    sep: str,
+) -> None:
+    """Expand separator-joined top-level keys into nested objects.
+
+    The inverse of flatten. Maps over a list root. Lists are not rebuilt
+    from numeric segments. A non-object, non-list root is unchanged.
+
+    Usage: data-transform unflatten [file]
+    """
+    try:
+        text, name = load_input(file)
+        src = resolve_from(text, name, from_format)
+        data = parse(text, src)  # type: ignore[arg-type]
+        result = unflatten_object(data, sep)
+        write_output(
+            serialize(result, "json", pretty=not minify, minify=minify), output
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(1)
+
+
 def _run_take(
     command: str,
     tokens: Sequence[str],
@@ -686,6 +734,96 @@ def tail_cmd(
     Usage: data-transform tail N [file]
     """
     _run_take("tail", tokens, output, from_format, minify)
+
+
+@main.command("group-by")
+@click.argument("tokens", nargs=-1, required=True)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="input format: json | yaml | csv | ndjson",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+def group_by_cmd(
+    tokens: tuple[str, ...],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+) -> None:
+    """Group an array of objects by top-level KEY.
+
+    Emits an object of KEY value → list of items, in first-seen order.
+    Non-string values become JSON text labels. Non-object items and items
+    missing KEY are dropped. Root must be a list.
+
+    Usage: data-transform group-by KEY [file]
+    """
+    try:
+        parts, input_file = _split_tokens_and_file(tokens)
+        if len(parts) != 1:
+            raise ValueError("Usage: group-by KEY [file]")
+        key = parts[0]
+
+        text, name = load_input(input_file)
+        src = resolve_from(text, name, from_format)
+        data = parse(text, src)  # type: ignore[arg-type]
+        result = group_rows(data, key)
+        write_output(
+            serialize(result, "json", pretty=not minify, minify=minify), output
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(1)
+
+
+@main.command("count")
+@click.argument("tokens", nargs=-1, required=False)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="input format: json | yaml | csv | ndjson",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+def count_cmd(
+    tokens: tuple[str, ...],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+) -> None:
+    """Count records in a list, per KEY value, or per group.
+
+    Without KEY, a list root prints its length and group-by output prints
+    the size of each group. With KEY, prints an object of KEY value → count
+    (same labels and dropping rules as group-by).
+
+    Usage: data-transform count [KEY] [file]
+    """
+    try:
+        parts, input_file = _split_tokens_and_file(tokens)
+        key: Optional[str] = None
+        if len(parts) == 1:
+            key = parts[0]
+        elif len(parts) > 1:
+            raise ValueError("Usage: count [KEY] [file]")
+
+        text, name = load_input(input_file)
+        src = resolve_from(text, name, from_format)
+        data = parse(text, src)  # type: ignore[arg-type]
+        result = count_rows(data, key)
+        write_output(
+            serialize(result, "json", pretty=not minify, minify=minify), output
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

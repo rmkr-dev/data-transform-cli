@@ -155,6 +155,58 @@ def _flatten_mapping(
             out[path] = value
 
 
+def unflatten_object(data: Any, sep: str = ".") -> Any:
+    """
+    Expand ``sep``-joined top-level keys back into nested mappings.
+
+    The inverse of :func:`flatten_object`. A list root is mapped item-wise;
+    non-mapping items are left unchanged. A non-mapping, non-list root is
+    returned unchanged. Only top-level string keys are split; values are kept
+    as-is, and no list indices are created (segments such as ``"0"`` stay
+    string keys). Keys are split literally, so empty segments become empty
+    keys. Object values merge with branches built from joined keys; when a
+    path collides with a non-object value, the later key wins. An empty
+    separator raises ValueError.
+    """
+    if not isinstance(sep, str) or sep == "":
+        raise ValueError("unflatten: separator must be a non-empty string")
+    if isinstance(data, list):
+        return [_unflatten_one(item, sep) for item in data]
+    return _unflatten_one(data, sep)
+
+
+def _unflatten_one(item: Any, sep: str) -> Any:
+    if not isinstance(item, Mapping):
+        return item
+    nested: dict[Any, Any] = {}
+    for key, value in item.items():
+        parts = key.split(sep) if isinstance(key, str) else [key]
+        current = nested
+        for part in parts[:-1]:
+            child = current.get(part)
+            if not isinstance(child, dict):
+                # Missing or a non-object value: the later key wins.
+                child = {}
+                current[part] = child
+            current = child
+        _merge_value(current, parts[-1], value)
+    return nested
+
+
+def _merge_value(target: dict[Any, Any], key: Any, value: Any) -> None:
+    """Set target[key]; objects merge into an existing object branch."""
+    if isinstance(value, Mapping):
+        branch = target.get(key)
+        if not isinstance(branch, dict):
+            branch = {}
+            target[key] = branch
+        # Copy object values so later keys never mutate the input.
+        for sub_key, sub_value in value.items():
+            _merge_value(branch, sub_key, sub_value)
+    else:
+        target[key] = value
+
+
 def _require_list(data: Any, command: str) -> list[Any]:
     """Raise ValueError unless data is a list; return it typed."""
     if not isinstance(data, list):
@@ -309,6 +361,69 @@ def unique_rows(data: Any, key: str | None = None) -> list[Any]:
         seen.add(marker)
         out.append(item)
     return out
+
+
+def _group_label(value: Any) -> str:
+    """Turn a group value into an object key: strings as-is, else compact JSON."""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def group_rows(data: Any, key: str) -> dict[str, list[Any]]:
+    """
+    Group an array of objects by top-level KEY.
+
+    Returns an object mapping each group label to the list of items in that
+    group. Groups keep first-seen order and items keep input order. Labels
+    are the value itself for strings and compact JSON otherwise (``1`` →
+    ``"1"``, ``true`` → ``"true"``, ``null`` → ``"null"``), so ``1`` and
+    ``"1"`` share a group. Non-object items and objects without KEY are
+    dropped. Root must be a list.
+    """
+    return _group(_require_list(data, "group-by"), key)
+
+
+def _group(rows: list[Any], key: str) -> dict[str, list[Any]]:
+    groups: dict[str, list[Any]] = {}
+    for item in rows:
+        if not isinstance(item, Mapping) or key not in item:
+            continue
+        groups.setdefault(_group_label(item[key]), []).append(item)
+    return groups
+
+
+def _is_grouped(data: Any) -> bool:
+    """True for a mapping whose values are all lists (``group-by`` output)."""
+    return isinstance(data, Mapping) and all(
+        isinstance(v, list) for v in data.values()
+    )
+
+
+def count_rows(data: Any, key: str | None = None) -> int | dict[str, int]:
+    """
+    Count records.
+
+    Without KEY, a list root returns its length, and an object whose values
+    are all lists (the output of :func:`group_rows`) returns the length of
+    each list under the same group label. With KEY, a list root returns an
+    object of per-value counts using the same labels and dropping rules as
+    :func:`group_rows`. Any other root raises ValueError.
+    """
+    if key is None:
+        if isinstance(data, list):
+            return len(data)
+        if _is_grouped(data):
+            return {str(label): len(items) for label, items in data.items()}
+        raise ValueError(
+            "count: root must be a list (array) or an object of lists "
+            f"(group-by output), got {type(data).__name__}"
+        )
+    rows = _require_list(data, "count")
+    return {label: len(items) for label, items in _group(rows, key).items()}
 
 
 def _require_count(n: Any, command: str) -> int:

@@ -2,15 +2,18 @@ import pytest
 
 import data_transform
 from data_transform.shape import (
+    count_rows,
     filter_rows,
     flatten_object,
     get_path,
+    group_rows,
     head_rows,
     omit_keys,
     pick_keys,
     rename_keys,
     sort_rows,
     tail_rows,
+    unflatten_object,
     unique_rows,
 )
 
@@ -163,8 +166,16 @@ def test_unique_requires_list():
 
 
 def test_public_exports_include_reshape_helpers():
-    assert data_transform.__version__ == "0.4.0"
-    for name in ("rename_keys", "flatten_object", "head_rows", "tail_rows"):
+    assert data_transform.__version__ == "0.5.0"
+    for name in (
+        "rename_keys",
+        "flatten_object",
+        "head_rows",
+        "tail_rows",
+        "group_rows",
+        "count_rows",
+        "unflatten_object",
+    ):
         assert getattr(data_transform, name) is not None
 
 
@@ -281,3 +292,104 @@ def test_head_and_tail_reject_bad_count_and_non_list():
             fn([1, 2], 1.5)  # type: ignore[arg-type]
         with pytest.raises(ValueError, match=label):
             fn("abc", 1)
+
+
+def test_group_rows_first_seen_order_and_drops():
+    data = [
+        {"team": "b", "id": 1},
+        {"team": "a", "id": 2},
+        {"id": 3},
+        "x",
+        {"team": "b", "id": 4},
+    ]
+    result = group_rows(data, "team")
+    assert list(result) == ["b", "a"]
+    assert result == {
+        "b": [{"team": "b", "id": 1}, {"team": "b", "id": 4}],
+        "a": [{"team": "a", "id": 2}],
+    }
+    assert result["b"][0] is data[0]
+    assert group_rows([], "team") == {}
+
+
+def test_group_rows_labels_non_string_values():
+    data = [
+        {"k": 1},
+        {"k": "1"},
+        {"k": True},
+        {"k": None},
+        {"k": [1, 2]},
+        {"k": {"b": 1, "a": 2}},
+    ]
+    result = group_rows(data, "k")
+    assert list(result) == ["1", "true", "null", "[1,2]", '{"a":2,"b":1}']
+    assert result["1"] == [{"k": 1}, {"k": "1"}]
+
+
+def test_group_rows_requires_list():
+    with pytest.raises(ValueError, match="group-by: root must be a list"):
+        group_rows({"k": 1}, "k")
+
+
+def test_count_rows_total_per_key_and_grouped():
+    data = [{"t": "a"}, {"t": "b"}, {"t": "a"}, {"n": 1}, 7]
+    assert count_rows(data) == 5
+    assert count_rows([]) == 0
+    assert count_rows(data, "t") == {"a": 2, "b": 1}
+    assert count_rows(group_rows(data, "t")) == {"a": 2, "b": 1}
+    assert count_rows({}) == {}
+
+
+def test_count_rows_rejects_other_roots():
+    with pytest.raises(ValueError, match="count: root must be a list"):
+        count_rows({"a": 1})
+    with pytest.raises(ValueError, match="count: root must be a list"):
+        count_rows("abc")
+    with pytest.raises(ValueError, match="count: root must be a list"):
+        count_rows({"a": [1]}, "t")
+
+
+def test_unflatten_nested_keys_and_list_root():
+    tags = ["a", "b"]
+    data = {"user.name": "Ada", "user.addr.city": "London", "tags": tags}
+    result = unflatten_object(data)
+    assert result == {
+        "user": {"name": "Ada", "addr": {"city": "London"}},
+        "tags": tags,
+    }
+    assert result["tags"] is tags
+    assert unflatten_object([{"a_b": 1}, 2, "x"], sep="_") == [{"a": {"b": 1}}, 2, "x"]
+    assert unflatten_object({"items.0": "x"}) == {"items": {"0": "x"}}
+    assert unflatten_object(42) == 42
+    assert unflatten_object(None) is None
+    assert unflatten_object({}) == {}
+    assert unflatten_object([]) == []
+
+
+def test_unflatten_round_trips_flatten():
+    data = {
+        "user": {"name": "Ada", "addr": {"city": "London", "zip": None}},
+        "meta": {},
+        "tags": [{"id": 1}],
+        "ok": True,
+    }
+    assert unflatten_object(flatten_object(data)) == data
+    assert unflatten_object(flatten_object(data, sep="__"), sep="__") == data
+
+
+def test_unflatten_collisions_merge_objects_and_later_scalar_wins():
+    assert unflatten_object({"a": 1, "a.b": 2}) == {"a": {"b": 2}}
+    assert unflatten_object({"a.b": 2, "a": 1}) == {"a": 1}
+    assert unflatten_object({"a.b": 1, "a": {"c": 2}}) == {"a": {"b": 1, "c": 2}}
+    inner = {"c": 2}
+    data = {"a": inner, "a.b": 1}
+    assert unflatten_object(data) == {"a": {"c": 2, "b": 1}}
+    assert inner == {"c": 2}
+    assert unflatten_object({"a..b": 1, 1: "x"}) == {"a": {"": {"b": 1}}, 1: "x"}
+
+
+def test_unflatten_rejects_empty_separator():
+    with pytest.raises(ValueError, match="separator"):
+        unflatten_object({"a.b": 1}, sep="")
+    with pytest.raises(ValueError, match="separator"):
+        unflatten_object({"a": 1}, sep=None)  # type: ignore[arg-type]

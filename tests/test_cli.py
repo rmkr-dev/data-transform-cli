@@ -376,3 +376,107 @@ def test_head_tail_clamp_zero_and_errors(tmp_path):
     assert code == 1
     assert "error:" in stderr
     assert "Usage:" in stderr
+
+
+def test_group_by_from_stdin_and_file():
+    code, stdout, stderr = run_cli(
+        ["group-by", "team", "-f", "json", "--minify"],
+        '[{"team":"a","id":1},{"team":"b","id":2},{"team":"a","id":3},{"id":4}]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == {
+        "a": [{"team": "a", "id": 1}, {"team": "a", "id": 3}],
+        "b": [{"team": "b", "id": 2}],
+    }
+
+    code, stdout, stderr = run_cli(
+        ["group-by", "id", str(FIXTURE / "sample.json"), "--minify"]
+    )
+    assert code == 0, stderr
+    assert list(json.loads(stdout)) == ["1", "2"]
+
+
+def test_group_by_errors():
+    code, stdout, stderr = run_cli(["group-by", "k", "-f", "json"], '{"k":1}')
+    assert code == 1
+    assert stdout == ""
+    assert "error:" in stderr
+    assert "list" in stderr.lower()
+
+    code, stdout, stderr = run_cli(["group-by", "a", "b", "-f", "json"], "[]")
+    assert code == 1
+    assert "Usage:" in stderr
+
+
+def test_count_total_per_key_and_piped_groups():
+    rows = '[{"t":"a"},{"t":"b"},{"t":"a"}]'
+    code, stdout, stderr = run_cli(["count", "-f", "json"], rows)
+    assert code == 0, stderr
+    assert json.loads(stdout) == 3
+
+    code, stdout, stderr = run_cli(["count", "t", "-f", "json", "--minify"], rows)
+    assert code == 0, stderr
+    assert stdout.strip() == '{"a":2,"b":1}'
+
+    code, grouped, stderr = run_cli(["group-by", "t", "-f", "json"], rows)
+    assert code == 0, stderr
+    code, stdout, stderr = run_cli(["count", "-f", "json", "--minify"], grouped)
+    assert code == 0, stderr
+    assert json.loads(stdout) == {"a": 2, "b": 1}
+
+    code, stdout, stderr = run_cli(["count", str(FIXTURE / "sample.json")])
+    assert code == 0, stderr
+    assert json.loads(stdout) == 2
+
+    code, stdout, stderr = run_cli(
+        ["count", "-f", "ndjson"], '{"id":1}\n{"id":2}\n'
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == 2
+
+
+def test_count_errors():
+    code, stdout, stderr = run_cli(["count", "-f", "json"], '{"a":1}')
+    assert code == 1
+    assert "error:" in stderr
+    assert "list" in stderr.lower()
+
+    code, stdout, stderr = run_cli(["count", "a", "b", "-f", "json"], "[]")
+    assert code == 1
+    assert "Usage:" in stderr
+
+
+def test_unflatten_nested_custom_sep_and_round_trip(tmp_path):
+    code, stdout, stderr = run_cli(
+        ["unflatten", "-f", "json", "--minify"],
+        '{"user.name":"Ada","user.addr.city":"London","tags":["a","b"]}',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == {
+        "user": {"name": "Ada", "addr": {"city": "London"}},
+        "tags": ["a", "b"],
+    }
+
+    code, stdout, stderr = run_cli(
+        ["unflatten", "--sep", "_", "-f", "json", "--minify"],
+        '[{"user_name":"Ada"},3]',
+    )
+    assert code == 0, stderr
+    assert json.loads(stdout) == [{"user": {"name": "Ada"}}, 3]
+
+    original = {"user": {"name": "Ada", "addr": {"city": "London"}}, "id": 1}
+    flat_file = tmp_path / "flat.json"
+    code, stdout, stderr = run_cli(
+        ["flatten", "-f", "json", "-o", str(flat_file)], json.dumps(original)
+    )
+    assert code == 0, stderr
+    code, stdout, stderr = run_cli(["unflatten", str(flat_file)])
+    assert code == 0, stderr
+    assert json.loads(stdout) == original
+
+    code, stdout, stderr = run_cli(
+        ["unflatten", "--sep", "", "-f", "json"], '{"a.b":1}'
+    )
+    assert code == 1
+    assert "error:" in stderr
+    assert "separator" in stderr
