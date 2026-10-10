@@ -426,6 +426,49 @@ def count_rows(data: Any, key: str | None = None) -> int | dict[str, int]:
     return {label: len(items) for label, items in _group(rows, key).items()}
 
 
+def _stats_one(rows: list[Any], field: str) -> dict[str, Any]:
+    values = [
+        _as_number(item[field])
+        for item in rows
+        if isinstance(item, Mapping) and field in item and _looks_number(item[field])
+    ]
+    if not values:
+        return {"count": 0, "sum": 0, "min": None, "max": None, "avg": None}
+
+    def tidy(x: float) -> int | float:
+        return int(x) if x.is_integer() else x
+
+    total = sum(values)
+    return {
+        "count": len(values),
+        "sum": tidy(total),
+        "min": tidy(min(values)),
+        "max": tidy(max(values)),
+        "avg": tidy(total / len(values)),
+    }
+
+
+def stats_rows(data: Any, field: str) -> dict[str, Any]:
+    """
+    Summarise numeric top-level FIELD: count, sum, min, max, avg.
+
+    A list root returns one summary. An object whose values are all lists
+    (the output of :func:`group_rows`) returns one summary per group label.
+    Numeric strings count as numbers (handy for CSV); booleans, missing
+    keys, and non-numeric values are skipped. With no numeric values the
+    summary has count 0, sum 0, and null min/max/avg. Whole-number results
+    are emitted as integers.
+    """
+    if isinstance(data, list):
+        return _stats_one(data, field)
+    if _is_grouped(data):
+        return {str(label): _stats_one(items, field) for label, items in data.items()}
+    raise ValueError(
+        "stats: root must be a list (array) or an object of lists "
+        f"(group-by output), got {type(data).__name__}"
+    )
+
+
 def _require_count(n: Any, command: str) -> int:
     """Raise ValueError unless n is a non-negative integer (not bool)."""
     if isinstance(n, bool) or not isinstance(n, int) or n < 0:

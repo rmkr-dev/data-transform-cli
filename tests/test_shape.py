@@ -166,7 +166,7 @@ def test_unique_requires_list():
 
 
 def test_public_exports_include_reshape_helpers():
-    assert data_transform.__version__ == "0.5.0"
+    assert data_transform.__version__ == "0.6.0"
     for name in (
         "rename_keys",
         "flatten_object",
@@ -174,6 +174,7 @@ def test_public_exports_include_reshape_helpers():
         "tail_rows",
         "group_rows",
         "count_rows",
+        "stats_rows",
         "unflatten_object",
     ):
         assert getattr(data_transform, name) is not None

@@ -13,6 +13,7 @@ from .shape import (
     pick_keys,
     rename_keys,
     sort_rows,
+    stats_rows,
     tail_rows,
     unflatten_object,
     unique_rows,
@@ -41,6 +42,7 @@ __all__ = [
     "tail_rows",
     "group_rows",
     "count_rows",
+    "stats_rows",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
