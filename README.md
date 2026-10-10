@@ -38,6 +38,7 @@ After install, the `data-transform` console script is on your `PATH`.
 | `tail` | Last N items of a list |
 | `group-by` | Group array of objects by top-level KEY |
 | `count` | Count items, per KEY value, or per group |
+| `stats` | count / sum / min / max / avg of a numeric FIELD |
 
 ### Options (most commands)
 
@@ -235,6 +236,19 @@ data-transform group-by team people.json | data-transform count --minify
 
 # Works with NDJSON / CSV too
 data-transform count status events.ndjson
+```
+
+### Stats
+
+`stats FIELD` summarises a numeric top-level field and prints `count`, `sum`, `min`, `max`, and `avg`. On a list root it prints one summary; on `group-by` output it prints one summary per group. Numeric strings count as numbers, so CSV input works directly. Booleans, missing keys, and non-numeric values are skipped. If nothing numeric is found the summary is `count: 0`, `sum: 0`, and `null` for the rest. Whole-number results print as integers.
+
+```bash
+echo '[{"ms":120},{"ms":80},{"ms":"100"},{"ms":"n/a"}]' \
+  | data-transform stats ms -f json --minify
+# → {"count":3,"sum":300,"min":80,"max":120,"avg":100}
+
+# Per-group latency summary
+data-transform group-by service requests.csv | data-transform stats ms
 ```
 
 ### Library use

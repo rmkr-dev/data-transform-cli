@@ -12,6 +12,7 @@ from . import __version__
 from .convert import convert, detect_format, infer_format, parse, serialize
 from .shape import (
     count_rows,
+    stats_rows,
     filter_rows,
     flatten_object,
     get_path,
@@ -818,6 +819,47 @@ def count_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = count_rows(data, key)
+        write_output(
+            serialize(result, "json", pretty=not minify, minify=minify), output
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(1)
+
+
+@main.command("stats")
+@click.argument("tokens", nargs=-1, required=True)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="input format: json | yaml | csv | ndjson",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+def stats_cmd(
+    tokens: tuple[str, ...],
+    output: Optional[str],
+    from_format: Optional[str],
+    minify: bool,
+) -> None:
+    """Summarise a numeric FIELD: count, sum, min, max, avg.
+
+    Works on a list root (one summary) or group-by output (one summary per
+    group). Numeric strings count; non-numeric and missing values are skipped.
+
+    Usage: data-transform stats FIELD [file]
+    """
+    try:
+        parts, input_file = _split_tokens_and_file(tokens)
+        if len(parts) != 1:
+            raise ValueError("Usage: stats FIELD [file]")
+        text, name = load_input(input_file)
+        src = resolve_from(text, name, from_format)
+        data = parse(text, src)  # type: ignore[arg-type]
+        result = stats_rows(data, parts[0])
         write_output(
             serialize(result, "json", pretty=not minify, minify=minify), output
         )
