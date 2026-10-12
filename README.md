@@ -39,15 +39,17 @@ After install, the `data-transform` console script is on your `PATH`.
 | `group-by` | Group array of objects by top-level KEY |
 | `count` | Count items, per KEY value, or per group |
 | `stats` | count / sum / min / max / avg of a numeric FIELD |
+| `join` | Join two arrays of objects on a top-level KEY (`--with` file) |
 
 ### Options (most commands)
 
 - `[file]` — input path; omit or use `-` for stdin
 - `-o, --output <file>` — write to a file instead of stdout
 - `-f, --from <format>` — force input format: `json` | `yaml` | `csv` | `ndjson`
-- `--minify` — compact JSON output (`to-json`, `select`, `pick`, `omit`, `rename`, `flatten`, `unflatten`, `filter`, `sort`, `unique`, `head`, `tail`, `group-by`, `count`)
+- `--minify` — compact JSON output (`to-json`, `select`, `pick`, `omit`, `rename`, `flatten`, `unflatten`, `filter`, `sort`, `unique`, `head`, `tail`, `group-by`, `count`, `stats`, `join`)
 - `--desc` — reverse sort order (`sort` only)
 - `--sep <text>` — separator between nested keys (`flatten` and `unflatten`, default `.`)
+- `-w, --with <file>`, `--how inner|left`, `--right-from <format>` — right-hand file, join type, and right file format (`join` only)
 
 Format is taken from `--from`, else the file extension (`.ndjson` / `.jsonl` → ndjson), else simple content heuristics.
 
@@ -251,6 +253,32 @@ echo '[{"ms":120},{"ms":80},{"ms":"100"},{"ms":"n/a"}]' \
 data-transform group-by service requests.csv | data-transform stats ms
 ```
 
+### Join
+
+`join KEY --with RIGHT_FILE [file]` joins two arrays of objects on a top-level `KEY`. The left side is `[file]` or stdin; the right side is always a file given with `-w` / `--with`. Each side's format is detected on its own, so you can join JSON against CSV, YAML, or NDJSON. Use `-f` to force the left format and `--right-from` to force the right one.
+
+- `--how inner` (default) keeps only rows that match. `--how left` also keeps left rows with no match, unchanged.
+- Output keeps left-row order. A left row that matches several right rows produces one output row per match, in right-file order.
+- Each output row starts with the left row's keys, then adds the right row's keys. If both have the same key (other than `KEY`), the right value wins. `KEY` appears once, with the left value.
+- Values match using the same labels as `group-by`, so `1` and `"1"` are equal — useful when one side is CSV. A missing or `null` `KEY` never matches.
+- Both roots must be lists, and every item must be an object; anything else is an error.
+
+```bash
+echo '[{"id":1,"name":"Ada"},{"id":2,"name":"Bob"},{"id":3,"name":"Cy"}]' > users.json
+printf 'id,team\n1,core\n2,web\n2,ops\n' > teams.csv
+
+data-transform join id --with teams.csv users.json --minify
+# → [{"id":1,"name":"Ada","team":"core"},{"id":2,"name":"Bob","team":"web"},{"id":2,"name":"Bob","team":"ops"}]
+
+data-transform join id -w teams.csv users.json --how left --minify
+# → [... same three rows ..., {"id":3,"name":"Cy"}]
+
+# Left side from stdin, then summarise per team
+cat users.json | data-transform join id -w teams.csv -f json \
+  | data-transform group-by team | data-transform count --minify
+# → {"core":1,"web":1,"ops":1}
+```
+
 ### Library use
 
 ```python
@@ -271,6 +299,8 @@ from data_transform import (
     tail_rows,
     group_rows,
     count_rows,
+    stats_rows,
+    join_rows,
 )
 
 yaml_text = convert('{"a":1}', "json", "yaml")
@@ -289,6 +319,8 @@ last = tail_rows([{"id": 1}, {"id": 2}, {"id": 3}], 1)
 by_team = group_rows([{"team": "a"}, {"team": "b"}], "team")
 total = count_rows([{"id": 1}, {"id": 2}])
 per_team = count_rows([{"team": "a"}, {"team": "a"}], "team")
+summary = stats_rows([{"ms": 120}, {"ms": 80}], "ms")
+joined = join_rows([{"id": 1, "name": "Ada"}], [{"id": "1", "team": "core"}], "id")
 ```
 
 ## NDJSON notes

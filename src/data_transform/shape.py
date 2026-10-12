@@ -469,6 +469,80 @@ def stats_rows(data: Any, field: str) -> dict[str, Any]:
     )
 
 
+JOIN_HOWS = frozenset({"inner", "left"})
+
+
+def _join_side(data: Any, side: str) -> list[Mapping[Any, Any]]:
+    """Require a list of objects for one side of a join."""
+    if not isinstance(data, list):
+        raise ValueError(
+            f"join: {side} root must be a list (array) of objects, "
+            f"got {type(data).__name__}"
+        )
+    for index, item in enumerate(data):
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"join: {side} item {index} must be an object, "
+                f"got {type(item).__name__}"
+            )
+    return data
+
+
+def _join_label(item: Mapping[Any, Any], key: str) -> str | None:
+    """Match label for KEY, or None when the key is missing or null."""
+    if key not in item or item[key] is None:
+        return None
+    return _group_label(item[key])
+
+
+def join_rows(
+    left: Any, right: Any, key: str, how: str = "inner"
+) -> list[dict[Any, Any]]:
+    """
+    Join two lists of objects on top-level KEY.
+
+    Values match with the same labels as :func:`group_rows`, so ``1`` and
+    ``"1"`` are equal (handy when one side is CSV). Missing or null KEY
+    values never match. Each output row starts with the left object's keys;
+    right keys are added after, and on a collision the right value wins.
+    KEY keeps the left value and appears once. Output follows left-row order,
+    and a left row with several right matches yields one row per match in
+    right-row order.
+
+    ``how="inner"`` keeps only matched pairs. ``how="left"`` also keeps
+    unmatched left rows as they are. Both roots must be lists of objects.
+    """
+    how_norm = how.lower() if isinstance(how, str) else how
+    if how_norm not in JOIN_HOWS:
+        raise ValueError(f"join: unsupported join type {how!r} (use inner or left)")
+    if not isinstance(key, str) or key == "":
+        raise ValueError("join: KEY must be a non-empty string")
+    left_rows = _join_side(left, "left")
+    right_rows = _join_side(right, "right")
+
+    index: dict[str, list[Mapping[Any, Any]]] = {}
+    for item in right_rows:
+        label = _join_label(item, key)
+        if label is not None:
+            index.setdefault(label, []).append(item)
+
+    out: list[dict[Any, Any]] = []
+    for item in left_rows:
+        label = _join_label(item, key)
+        matches = index.get(label, []) if label is not None else []
+        if not matches:
+            if how_norm == "left":
+                out.append(dict(item))
+            continue
+        for match in matches:
+            merged = dict(item)
+            for field, value in match.items():
+                if field != key:
+                    merged[field] = value
+            out.append(merged)
+    return out
+
+
 def _require_count(n: Any, command: str) -> int:
     """Raise ValueError unless n is a non-negative integer (not bool)."""
     if isinstance(n, bool) or not isinstance(n, int) or n < 0:
