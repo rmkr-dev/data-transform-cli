@@ -18,6 +18,7 @@ from .shape import (
     get_path,
     group_rows,
     head_rows,
+    join_rows,
     omit_keys,
     pick_keys,
     rename_keys,
@@ -860,6 +861,87 @@ def stats_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = stats_rows(data, parts[0])
+        write_output(
+            serialize(result, "json", pretty=not minify, minify=minify), output
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(1)
+
+
+def _load_right(path: str, right_from: Optional[str]) -> object:
+    """Load and parse the right-hand file of a join (never stdin)."""
+    if path == "-":
+        raise ValueError("join: --with needs a file path; stdin is used for the left side")
+    file = Path(path)
+    if not file.is_file():
+        raise ValueError(f"join: right file not found: {path}")
+    text = file.read_text(encoding="utf-8")
+    src = resolve_from(text, path, right_from)
+    return parse(text, src)  # type: ignore[arg-type]
+
+
+@main.command("join")
+@click.argument("key")
+@click.argument("file", required=False)
+@click.option(
+    "-w",
+    "--with",
+    "right_file",
+    required=True,
+    metavar="RIGHT_FILE",
+    help="right-hand file to join against (not stdin)",
+)
+@click.option("-o", "--output", default=None, help="write to file instead of stdout")
+@click.option(
+    "-f",
+    "--from",
+    "from_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="left input format: json | yaml | csv | ndjson",
+)
+@click.option(
+    "--right-from",
+    "right_from",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="right file format: json | yaml | csv | ndjson",
+)
+@click.option(
+    "--how",
+    type=click.Choice(["inner", "left"], case_sensitive=False),
+    default="inner",
+    show_default=True,
+    help="inner keeps matched rows only; left also keeps unmatched left rows",
+)
+@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+def join_cmd(
+    key: str,
+    file: Optional[str],
+    right_file: str,
+    output: Optional[str],
+    from_format: Optional[str],
+    right_from: Optional[str],
+    how: str,
+    minify: bool,
+) -> None:
+    """Join two arrays of objects on top-level KEY.
+
+    The left side is FILE (or stdin); the right side is --with. Rows keep
+    left order, one output row per match. Right keys are added after left
+    keys and win on collisions; KEY appears once. Values match like
+    group-by labels, so 1 and "1" are equal. Missing or null KEY never
+    matches.
+
+    Usage: data-transform join KEY --with RIGHT_FILE [file]
+    """
+    try:
+        right = _load_right(right_file, right_from)
+        text, name = load_input(file)
+        src = resolve_from(text, name, from_format)
+        left = parse(text, src)  # type: ignore[arg-type]
+        result = join_rows(left, right, key, how=how)
         write_output(
             serialize(result, "json", pretty=not minify, minify=minify), output
         )

@@ -9,6 +9,7 @@ from .shape import (
     get_path,
     group_rows,
     head_rows,
+    join_rows,
     omit_keys,
     pick_keys,
     rename_keys,
@@ -43,6 +44,7 @@ __all__ = [
     "group_rows",
     "count_rows",
     "stats_rows",
+    "join_rows",
 ]
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
