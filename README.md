@@ -46,12 +46,44 @@ After install, the `data-transform` console script is on your `PATH`.
 - `[file]` — input path; omit or use `-` for stdin
 - `-o, --output <file>` — write to a file instead of stdout
 - `-f, --from <format>` — force input format: `json` | `yaml` | `csv` | `ndjson`
-- `--minify` — compact JSON output (`to-json`, `select`, `pick`, `omit`, `rename`, `flatten`, `unflatten`, `filter`, `sort`, `unique`, `head`, `tail`, `group-by`, `count`, `stats`, `join`)
+- `-t, --to <format>` — output format for the shaping commands (everything except `to-*`, `pretty`, and `minify`): `json` | `yaml` | `csv` | `ndjson`. Defaults to the `--output` file extension, else JSON. See [Output formats](#output-formats)
+- `--minify` — compact JSON output (`to-json` and the shaping commands); ignored when the output format is not JSON
 - `--desc` — reverse sort order (`sort` only)
 - `--sep <text>` — separator between nested keys (`flatten` and `unflatten`, default `.`)
 - `-w, --with <file>`, `--how inner|left`, `--right-from <format>` — right-hand file, join type, and right file format (`join` only)
 
 Format is taken from `--from`, else the file extension (`.ndjson` / `.jsonl` → ndjson), else simple content heuristics.
+
+### Output formats
+
+Shaping commands (`select`, `pick`, `omit`, `rename`, `flatten`, `unflatten`, `filter`, `sort`, `unique`, `head`, `tail`, `group-by`, `count`, `stats`, `join`) print JSON by default. Use `-t` / `--to` to write YAML, CSV, or NDJSON directly instead of piping into a `to-*` command.
+
+- The format comes from `--to`, else the `--output` file extension (`.json`, `.yaml` / `.yml`, `.csv`, `.ndjson` / `.jsonl`), else JSON. `--to` always wins, and an unknown extension stays JSON.
+- JSON is pretty-printed unless `--minify` is set. `--minify` does nothing for YAML, CSV, or NDJSON (NDJSON is always one compact value per line).
+- CSV needs a list result. A number, object, or `group-by` result is an error (exit code 1) that suggests `--to json` or `--to yaml` instead.
+- YAML output keeps key order and keeps YAML-only values such as dates, which JSON can't represent.
+
+```bash
+# Filter a CSV and write CSV back out
+data-transform filter age ge 30 people.csv -t csv
+# → name,age
+#   Ada,36
+
+# Format picked from the output file name (events.json is an array of objects)
+data-transform flatten events.json -o events-flat.csv
+data-transform pick id name users.json -o users.yaml
+
+# Unknown extension: name the format with --to
+data-transform sort id users.json -t ndjson -o users.out
+
+# Per-team counts as YAML
+data-transform count team people.json -t yaml
+# → core: 1
+#   web: 1
+
+# Join JSON against CSV and emit CSV
+data-transform join id --with teams.csv users.json -t csv -o report.csv
+```
 
 ## Usage examples
 
@@ -330,6 +362,10 @@ NDJSON (also known as JSON Lines / `.jsonl`) is one JSON value per non-empty lin
 ## CSV notes
 
 CSV support is intentionally small and robust (RFC 4180-ish) via the Python standard library `csv` module: quoted fields, escaped quotes (`""`), and newlines inside quotes. Object arrays use a header row; all cell values are strings when parsed from CSV.
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md).
 
 ## Development
 

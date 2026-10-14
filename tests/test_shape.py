@@ -166,7 +166,7 @@ def test_unique_requires_list():
 
 
 def test_public_exports_include_reshape_helpers():
-    assert data_transform.__version__ == "0.7.0"
+    assert data_transform.__version__ == "0.8.0"
     for name in (
         "rename_keys",
         "flatten_object",
