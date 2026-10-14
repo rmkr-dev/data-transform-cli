@@ -60,6 +60,41 @@ def write_output(out: str, output_path: Optional[str]) -> None:
         sys.stdout.write(out)
 
 
+def resolve_to(to_flag: Optional[str], output_path: Optional[str]) -> str:
+    """Resolve output format from --to, else the --output extension, else JSON."""
+    if to_flag:
+        return to_flag.lower()
+    if output_path and output_path != "-":
+        detected = detect_format(output_path)
+        if detected:
+            return detected
+    return "json"
+
+
+def _emit(
+    result: object,
+    output: Optional[str],
+    to_format: Optional[str],
+    minify: bool,
+) -> None:
+    """Serialize a shaping result in the chosen output format and write it.
+
+    JSON is pretty-printed unless --minify is set. --minify has no effect on
+    YAML, CSV, or NDJSON (NDJSON is always compact).
+    """
+    fmt = resolve_to(to_format, output)
+    if fmt == "json":
+        out = serialize(result, "json", pretty=not minify, minify=minify)
+    else:
+        try:
+            out = serialize(result, fmt)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as err:
+            raise ValueError(
+                f"cannot write {fmt}: {err}. Use --to json or --to yaml for this result"
+            ) from err
+    write_output(out, output)
+
+
 def _parse_count(token: str, command: str) -> int:
     """Parse a non-negative integer count from a CLI token."""
     if token == "" or any(ch < "0" or ch > "9" for ch in token):
@@ -129,6 +164,37 @@ def _run_json_view(
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
+
+
+to_option = click.option(
+    "-t",
+    "--to",
+    "to_format",
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+    default=None,
+    help="output format: json | yaml | csv | ndjson "
+    "(default: from --output extension, else json)",
+)
+
+
+def shaping_options(func):
+    """Shared -o/-f/-t/--minify options for commands that reshape data."""
+    func = click.option(
+        "--minify", is_flag=True, default=False, help="emit compact JSON"
+    )(func)
+    func = to_option(func)
+    func = click.option(
+        "-f",
+        "--from",
+        "from_format",
+        type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
+        default=None,
+        help="input format: json | yaml | csv | ndjson",
+    )(func)
+    func = click.option(
+        "-o", "--output", default=None, help="write to file instead of stdout"
+    )(func)
+    return func
 
 
 @click.group()
@@ -253,20 +319,12 @@ def minify_cmd(
 
 @main.command("select")
 @click.argument("tokens", nargs=-1, required=True)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 def select_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Extract dotted paths from parsed data as JSON.
@@ -287,9 +345,7 @@ def select_cmd(
         else:
             result = {p: get_path(data, p) for p in path_list}
 
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -297,20 +353,12 @@ def select_cmd(
 
 @main.command("pick")
 @click.argument("tokens", nargs=-1, required=True)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 def pick_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Keep only listed top-level keys from an object (or each object in an array).
@@ -326,9 +374,7 @@ def pick_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = pick_keys(data, key_list)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -336,20 +382,12 @@ def pick_cmd(
 
 @main.command("omit")
 @click.argument("tokens", nargs=-1, required=True)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 def omit_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Drop listed top-level keys from an object (or each object in an array).
@@ -365,9 +403,7 @@ def omit_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = omit_keys(data, key_list)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -376,20 +412,12 @@ def omit_cmd(
 
 @main.command("filter")
 @click.argument("tokens", nargs=-1, required=True)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 def filter_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Keep array items where KEY OP VALUE matches.
@@ -419,9 +447,7 @@ def filter_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = filter_rows(data, key, op, value)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -429,21 +455,13 @@ def filter_cmd(
 
 @main.command("sort")
 @click.argument("tokens", nargs=-1, required=True)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 @click.option("--desc", is_flag=True, default=False, help="sort descending")
 def sort_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
     desc: bool,
 ) -> None:
@@ -463,9 +481,7 @@ def sort_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = sort_rows(data, key, desc=desc)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -473,20 +489,12 @@ def sort_cmd(
 
 @main.command("unique")
 @click.argument("tokens", nargs=-1, required=False)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 def unique_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Deduplicate an array (order-preserving, first wins).
@@ -512,9 +520,7 @@ def unique_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = unique_rows(data, key)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -522,20 +528,12 @@ def unique_cmd(
 
 @main.command("rename")
 @click.argument("tokens", nargs=-1, required=True)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 def rename_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Rename top-level keys (OLD NEW pairs) on an object or each object in an array.
@@ -553,9 +551,7 @@ def rename_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = rename_keys(data, mapping)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -563,16 +559,7 @@ def rename_cmd(
 
 @main.command("flatten")
 @click.argument("file", required=False)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 @click.option(
     "--sep",
     default=".",
@@ -583,6 +570,7 @@ def flatten_cmd(
     file: Optional[str],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
     sep: str,
 ) -> None:
@@ -598,9 +586,7 @@ def flatten_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = flatten_object(data, sep)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -608,16 +594,7 @@ def flatten_cmd(
 
 @main.command("unflatten")
 @click.argument("file", required=False)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 @click.option(
     "--sep",
     default=".",
@@ -628,6 +605,7 @@ def unflatten_cmd(
     file: Optional[str],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
     sep: str,
 ) -> None:
@@ -643,9 +621,7 @@ def unflatten_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = unflatten_object(data, sep)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -656,6 +632,7 @@ def _run_take(
     tokens: Sequence[str],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Shared runner for head/tail."""
@@ -672,9 +649,7 @@ def _run_take(
             result = head_rows(data, count)
         else:
             result = tail_rows(data, count)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -684,20 +659,12 @@ def _run_take(
 # can reject it, instead of Click treating it as a short flag.
 @main.command("head", context_settings={"ignore_unknown_options": True})
 @click.argument("tokens", nargs=-1, required=True)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 def head_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Return the first N items of a list.
@@ -707,25 +674,17 @@ def head_cmd(
 
     Usage: data-transform head N [file]
     """
-    _run_take("head", tokens, output, from_format, minify)
+    _run_take("head", tokens, output, from_format, to_format, minify)
 
 
 @main.command("tail", context_settings={"ignore_unknown_options": True})
 @click.argument("tokens", nargs=-1, required=True)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 def tail_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Return the last N items of a list.
@@ -735,25 +694,17 @@ def tail_cmd(
 
     Usage: data-transform tail N [file]
     """
-    _run_take("tail", tokens, output, from_format, minify)
+    _run_take("tail", tokens, output, from_format, to_format, minify)
 
 
 @main.command("group-by")
 @click.argument("tokens", nargs=-1, required=True)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 def group_by_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Group an array of objects by top-level KEY.
@@ -774,9 +725,7 @@ def group_by_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = group_rows(data, key)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -784,20 +733,12 @@ def group_by_cmd(
 
 @main.command("count")
 @click.argument("tokens", nargs=-1, required=False)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 def count_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Count records in a list, per KEY value, or per group.
@@ -820,9 +761,7 @@ def count_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = count_rows(data, key)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -830,20 +769,12 @@ def count_cmd(
 
 @main.command("stats")
 @click.argument("tokens", nargs=-1, required=True)
-@click.option("-o", "--output", default=None, help="write to file instead of stdout")
-@click.option(
-    "-f",
-    "--from",
-    "from_format",
-    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
-    default=None,
-    help="input format: json | yaml | csv | ndjson",
-)
-@click.option("--minify", is_flag=True, default=False, help="emit compact JSON")
+@shaping_options
 def stats_cmd(
     tokens: tuple[str, ...],
     output: Optional[str],
     from_format: Optional[str],
+    to_format: Optional[str],
     minify: bool,
 ) -> None:
     """Summarise a numeric FIELD: count, sum, min, max, avg.
@@ -861,9 +792,7 @@ def stats_cmd(
         src = resolve_from(text, name, from_format)
         data = parse(text, src)  # type: ignore[arg-type]
         result = stats_rows(data, parts[0])
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
@@ -908,6 +837,7 @@ def _load_right(path: str, right_from: Optional[str]) -> object:
     default=None,
     help="right file format: json | yaml | csv | ndjson",
 )
+@to_option
 @click.option(
     "--how",
     type=click.Choice(["inner", "left"], case_sensitive=False),
@@ -923,6 +853,7 @@ def join_cmd(
     output: Optional[str],
     from_format: Optional[str],
     right_from: Optional[str],
+    to_format: Optional[str],
     how: str,
     minify: bool,
 ) -> None:
@@ -942,9 +873,7 @@ def join_cmd(
         src = resolve_from(text, name, from_format)
         left = parse(text, src)  # type: ignore[arg-type]
         result = join_rows(left, right, key, how=how)
-        write_output(
-            serialize(result, "json", pretty=not minify, minify=minify), output
-        )
+        _emit(result, output, to_format, minify)
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
