@@ -19,6 +19,7 @@ from .shape import (
     unflatten_object,
     unique_rows,
 )
+from .validate import load_schema, validate_rows
 
 __all__ = [
     "convert",
@@ -45,6 +46,8 @@ __all__ = [
     "count_rows",
     "stats_rows",
     "join_rows",
+    "validate_rows",
+    "load_schema",
 ]
 
-__version__ = "0.8.0"
+__version__ = "1.0.0"

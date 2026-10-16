@@ -1,6 +1,19 @@
 # Changelog
 
-All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/); until 1.0.0, minor versions may change CLI behaviour.
+All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/). From 1.0.0, documented commands, options, exit codes, and output shapes only break in a new major version.
+
+## [1.0.0] - 2026-10-16
+
+### Added
+
+- `validate [file]` checks a list of records (or one object) and exits `0` when valid, `1` when not, and `2` when the check can't run.
+  - `-r, --require PATH`, `--type PATH=TYPE[|TYPE...]`, and `-u, --unique PATH`, all repeatable and using dotted paths.
+  - `-s, --schema FILE` reads `required`, `types`, and `unique` from a JSON or YAML file; command-line flags are added on top.
+  - `--coerce` lets numeric, `true` / `false`, and empty strings satisfy `integer`, `number`, `boolean`, and `null`, for CSV input.
+  - `--max-errors N` and `-q, --quiet`. `-t csv` / `-t ndjson` writes only the error rows.
+- `validate_rows` and `load_schema` in the library API.
+- CI now builds the sdist and wheel, installs the wheel in a clean virtual environment, and smoke-tests the `data-transform` command.
+- A Stability section in the README describing what 1.0.0 commits to.
 
 ## [0.8.0] - 2026-10-14
 
