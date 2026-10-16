@@ -27,6 +27,7 @@ from .shape import (
     unflatten_object,
     unique_rows,
 )
+from .validate import load_schema, parse_type_option, validate_rows
 
 FORMAT_CHOICES = ["json", "yaml", "csv", "ndjson"]
 
@@ -877,6 +878,128 @@ def join_cmd(
     except Exception as err:  # noqa: BLE001
         click.echo(f"error: {err}", err=True)
         sys.exit(1)
+
+
+@main.command("validate")
+@click.argument("file", required=False)
+@click.option(
+    "-r",
+    "--require",
+    "required",
+    multiple=True,
+    metavar="PATH",
+    help="dotted path every record must have (repeatable)",
+)
+@click.option(
+    "--type",
+    "type_specs",
+    multiple=True,
+    metavar="PATH=TYPE",
+    help="allowed type(s) for PATH, e.g. id=integer or email=string|null (repeatable)",
+)
+@click.option(
+    "-u",
+    "--unique",
+    multiple=True,
+    metavar="PATH",
+    help="dotted path whose values must not repeat across records (repeatable)",
+)
+@click.option(
+    "-s",
+    "--schema",
+    "schema_file",
+    default=None,
+    metavar="FILE",
+    help="JSON or YAML file with required / types / unique (merged with flags)",
+)
+@click.option(
+    "--coerce",
+    is_flag=True,
+    default=False,
+    help="let numeric / true / false / empty strings satisfy integer, number, "
+    "boolean, null (useful for CSV)",
+)
+@click.option(
+    "--max-errors",
+    type=click.IntRange(min=0),
+    default=None,
+    help="list at most N errors in the report (error_count stays exact)",
+)
+@click.option(
+    "-q", "--quiet", is_flag=True, default=False, help="print nothing; use the exit code"
+)
+@shaping_options
+def validate_cmd(
+    file: Optional[str],
+    required: tuple[str, ...],
+    type_specs: tuple[str, ...],
+    unique: tuple[str, ...],
+    schema_file: Optional[str],
+    coerce: bool,
+    max_errors: Optional[int],
+    quiet: bool,
+    output: Optional[str],
+    from_format: Optional[str],
+    to_format: Optional[str],
+    minify: bool,
+) -> None:
+    """Check records against required paths, types, and unique keys.
+
+    Prints a report with valid, records, error_count, and errors. With
+    --to csv or --to ndjson, prints just the errors, one row per error.
+    Types: string, integer, number, boolean, object, array, null.
+
+    Exit codes: 0 valid, 1 invalid, 2 the check could not run (bad input,
+    schema, or options).
+
+    Usage: data-transform validate [--require PATH] [--type PATH=TYPE]
+    [--unique PATH] [--schema FILE] [file]
+    """
+    try:
+        req: list[str] = []
+        types: dict[str, list[str]] = {}
+        uniq: list[str] = []
+        if schema_file:
+            schema_path = Path(schema_file)
+            if not schema_path.is_file():
+                raise ValueError(f"schema file not found: {schema_file}")
+            schema_text = schema_path.read_text(encoding="utf-8")
+            schema_src = resolve_from(schema_text, schema_file, None)
+            req, types, uniq = load_schema(parse(schema_text, schema_src))  # type: ignore[arg-type]
+        req += [p for p in required if p not in req]
+        for spec in type_specs:
+            path, names = parse_type_option(spec)
+            types[path] = names
+        uniq += [p for p in unique if p not in uniq]
+        if not (req or types or uniq):
+            raise ValueError(
+                "nothing to check; pass --require, --type, --unique, or --schema"
+            )
+
+        text, name = load_input(file)
+        src = resolve_from(text, name, from_format)
+        data = parse(text, src)  # type: ignore[arg-type]
+        report = validate_rows(
+            data,
+            required=req,
+            types=types,
+            unique=uniq,
+            coerce=coerce,
+            max_errors=max_errors,
+        )
+    except Exception as err:  # noqa: BLE001
+        click.echo(f"error: {err}", err=True)
+        sys.exit(2)
+
+    if not quiet:
+        try:
+            fmt = resolve_to(to_format, output)
+            result = report["errors"] if fmt in ("csv", "ndjson") else report
+            _emit(result, output, fmt, minify)
+        except Exception as err:  # noqa: BLE001
+            click.echo(f"error: {err}", err=True)
+            sys.exit(2)
+    sys.exit(0 if report["valid"] else 1)
 
 
 if __name__ == "__main__":

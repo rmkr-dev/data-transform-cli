@@ -40,6 +40,7 @@ After install, the `data-transform` console script is on your `PATH`.
 | `count` | Count items, per KEY value, or per group |
 | `stats` | count / sum / min / max / avg of a numeric FIELD |
 | `join` | Join two arrays of objects on a top-level KEY (`--with` file) |
+| `validate` | Check records for required paths, types, and unique keys (exit code 0 / 1 / 2) |
 
 ### Options (most commands)
 
@@ -51,6 +52,7 @@ After install, the `data-transform` console script is on your `PATH`.
 - `--desc` — reverse sort order (`sort` only)
 - `--sep <text>` — separator between nested keys (`flatten` and `unflatten`, default `.`)
 - `-w, --with <file>`, `--how inner|left`, `--right-from <format>` — right-hand file, join type, and right file format (`join` only)
+- `-r, --require <path>`, `--type <path>=<type>`, `-u, --unique <path>`, `-s, --schema <file>`, `--coerce`, `--max-errors <n>`, `-q, --quiet` — checks and report options (`validate` only). See [Validate](#validate)
 
 Format is taken from `--from`, else the file extension (`.ndjson` / `.jsonl` → ndjson), else simple content heuristics.
 
@@ -311,6 +313,44 @@ cat users.json | data-transform join id -w teams.csv -f json \
 # → {"core":1,"web":1,"ops":1}
 ```
 
+### Validate
+
+`validate` checks data before it moves further down a pipeline. It works on a list of objects (each item is a record) or on a single object. Paths are dotted, like `select`, so `user.name` and `items.0.sku` work.
+
+- `-r, --require PATH` — the path must be present in every record. A `null` value counts as present; add a type check to rule it out.
+- `--type PATH=TYPE` — the value must be one of the listed types: `string`, `integer`, `number`, `boolean`, `object`, `array`, `null`. Join several with `|`, for example `email=string|null`. Records without the path are skipped, so pair it with `--require` when the path is mandatory. Booleans are never numbers, and `integer` also satisfies `number`.
+- `-u, --unique PATH` — the value must not repeat across records. Values compare like `group-by` labels, so `1` and `"1"` count as the same. Records without the path are skipped.
+- `-s, --schema FILE` — a JSON or YAML file with any of `required` (list), `types` (path → type, or a list of types), and `unique` (list). Flags on the command line are added on top.
+- `--coerce` — let strings that look like integers, numbers, `true` / `false`, or an empty string satisfy `integer`, `number`, `boolean`, or `null`. Use it for CSV, where every cell is a string.
+- `--max-errors N` — list at most `N` errors. `error_count` is always the full count.
+- `-q, --quiet` — print nothing and rely on the exit code.
+
+The report is `{"valid", "records", "error_count", "errors"}`, where each error has `record` (the list index, or `null` for an object root), `path`, and `message`. `-t yaml` writes the report as YAML; `-t csv` or `-t ndjson` writes just the errors, one row per error, which is handy as a CI artifact.
+
+Exit codes: `0` when the data is valid, `1` when it is not, and `2` when the check could not run (unreadable input, a bad schema, an unknown type, or no checks given).
+
+```bash
+echo '[{"id":1,"email":"a@x.io"},{"id":"2"},{"id":1,"email":null}]' \
+  | data-transform validate -r id -r email --type id=integer --type 'email=string|null' -u id -f json --minify
+# → {"valid":false,"records":3,"error_count":3,"errors":[
+#     {"record":1,"path":"email","message":"missing required value"},
+#     {"record":1,"path":"id","message":"expected integer, got string"},
+#     {"record":2,"path":"id","message":"duplicate value '1' (first seen in record 0)"}]}
+
+# Data contract kept next to the pipeline
+cat > users.schema.yaml <<'YAML'
+required: [id, email]
+types:
+  id: integer
+  email: [string, "null"]
+unique: [id]
+YAML
+data-transform validate -s users.schema.yaml --coerce users.csv -q || echo "users.csv failed checks"
+
+# Fail a CI step and keep an error table
+data-transform validate -s users.schema.yaml --coerce users.csv -t csv -o validation-errors.csv
+```
+
 ### Library use
 
 ```python
@@ -333,6 +373,7 @@ from data_transform import (
     count_rows,
     stats_rows,
     join_rows,
+    validate_rows,
 )
 
 yaml_text = convert('{"a":1}', "json", "yaml")
@@ -353,6 +394,7 @@ total = count_rows([{"id": 1}, {"id": 2}])
 per_team = count_rows([{"team": "a"}, {"team": "a"}], "team")
 summary = stats_rows([{"ms": 120}, {"ms": 80}], "ms")
 joined = join_rows([{"id": 1, "name": "Ada"}], [{"id": "1", "team": "core"}], "id")
+report = validate_rows([{"id": 1}, {"id": "x"}], required=["id"], types={"id": ["integer"]})
 ```
 
 ## NDJSON notes
@@ -362,6 +404,10 @@ NDJSON (also known as JSON Lines / `.jsonl`) is one JSON value per non-empty lin
 ## CSV notes
 
 CSV support is intentionally small and robust (RFC 4180-ish) via the Python standard library `csv` module: quoted fields, escaped quotes (`""`), and newlines inside quotes. Object arrays use a header row; all cell values are strings when parsed from CSV.
+
+## Stability
+
+From 1.0.0 the command names, options, exit codes, and output shapes documented here follow [Semantic Versioning](https://semver.org/): they only change in a breaking way in a new major version. New commands and options may arrive in minor versions. The functions exported from `data_transform` follow the same rule; anything starting with `_` is internal.
 
 ## Changelog
 
